@@ -683,7 +683,7 @@ def test_bind_image_and_dialog_signatures_resolve():
             "int",
         ),
     )
-    dialog = FakeReflectedMethod("update", ("int", "boolean"))
+    dialog = FakeReflectedMethod("buildLayout", ())
     proxy = FakeRuntimeClassProxy([bind, image, dialog])
     assert module._find_declared_method(
         proxy,
@@ -697,7 +697,7 @@ def test_bind_image_and_dialog_signatures_resolve():
             "boolean",
         ),
     ) is bind
-    assert module._find_declared_method(proxy, "update", ("int", "boolean")) is dialog
+    assert module._find_declared_method(proxy, "buildLayout", ()) is dialog
     assert module._find_declared_method(
         proxy,
         "setImage",

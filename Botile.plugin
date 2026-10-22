@@ -666,12 +666,13 @@ class BotilePlugin(BasePlugin):
             self.log("hook bitmap: installed %d setImageBitmap overload(s)" % found)
 
     def _install_dialog_hook(self, dialog_cell):
-        method = _find_declared_method(dialog_cell, "update", ("int", "boolean"))
+        # 12.10.6 DialogCell uses buildLayout(), not update(int, boolean).
+        method = _find_declared_method(dialog_cell, "buildLayout", ())
         if method is None:
-            self.log("hook dialog: FAILED exact signature not found")
+            self.log("hook dialog: FAILED buildLayout() not found")
             return
         if self._hook("dialog", method, _DialogFallbackHook(self)) is not None:
-            self.log("hook dialog: installed update fallback")
+            self.log("hook dialog: installed buildLayout fallback")
 
     def _find_radius_method(self, image_receiver):
         try:
