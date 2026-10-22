@@ -1,55 +1,31 @@
 name: CI
 
-# Read-only checks. Pull requests from forks receive no repository secrets.
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   checks:
     name: Syntax and host-side checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-
-      - name: Check plugin syntax and release metadata
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
+      - name: Check plugin
         run: |
-          python - <<'PY'
-          import py_compile
-
-          py_compile.compile(
-              "Botile.plugin",
-              cfile="/tmp/Botile.plugin.pyc",
-              doraise=True,
-          )
-          print("plugin syntax OK")
-          PY
-          python scripts/package_release.py --check
-
-      - name: Run state-preservation checks
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: python tests/test_state_preservation.py
+          python3 -m py_compile Botile.plugin
+          python3 scripts/package_release.py --check
+          python3 tests/test_state_preservation.py
+          python3 scripts/package_release.py --output-dir /tmp/botile-dist
+          (cd /tmp/botile-dist && sha256sum -c SHA256SUMS)
