@@ -236,6 +236,146 @@ def test_unload_leaves_later_external_mark():
     assert receiver.mark == "later-unload", receiver.mark
 
 
+class FakeRectF:
+    def __init__(self):
+        self.left = self.top = self.right = self.bottom = 0.0
+
+    def set(self, left, top, right, bottom):
+        self.left, self.top, self.right, self.bottom = left, top, right, bottom
+
+    def width(self):
+        return self.right - self.left
+
+    def height(self):
+        return self.bottom - self.top
+
+
+class FakePaint:
+    def __init__(self):
+        self.color = 0
+        self.stroke_width = 0.0
+        self.style = None
+        self.anti_alias = False
+
+    def setAntiAlias(self, value):
+        self.anti_alias = bool(value)
+
+    def setStyle(self, value):
+        self.style = value
+
+    def setStrokeWidth(self, value):
+        self.stroke_width = float(value)
+
+    def setColor(self, value):
+        self.color = int(value)
+
+
+class FakeCanvas:
+    def __init__(self):
+        self.calls = []
+
+    def drawRoundRect(self, rect, rx, ry, paint):
+        self.calls.append((rect, rx, ry, paint))
+
+
+class FakeTheme:
+    key_windowBackgroundWhiteBlackText = 7
+
+    @staticmethod
+    def getColor(key):
+        assert key == FakeTheme.key_windowBackgroundWhiteBlackText
+        return 0xFF102030
+
+    @staticmethod
+    def multAlpha(color, multiply):
+        alpha = int((color >> 24) * multiply) & 0xFF
+        return (alpha << 24) | (color & 0xFFFFFF)
+
+
+class FakeDrawReceiver(FakeReceiver):
+    def __init__(self, corners=(11, 11, 11, 11), mark=MARKER):
+        super().__init__(corners=corners, mark=mark)
+        self.image_x = 10.0
+        self.image_y = 20.0
+        self.image_w = 100.0
+        self.image_h = 100.0
+        self.alpha = 1.0
+        self.current_alpha = 1.0
+
+    def getImageX(self):
+        return self.image_x
+
+    def getImageY(self):
+        return self.image_y
+
+    def getImageWidth(self):
+        return self.image_w
+
+    def getImageHeight(self):
+        return self.image_h
+
+    def getAlpha(self):
+        return self.alpha
+
+    def getCurrentAlpha(self):
+        return self.current_alpha
+
+
+class FakeParam:
+    def __init__(self, obj, args, result=True):
+        self.thisObject = obj
+        self.args = args
+        self._result = result
+
+    def getResult(self):
+        return self._result
+
+
+def make_border_plugin():
+    plugin = make_plugin()
+    plugin._border_paint = FakePaint()
+    plugin._border_rect = FakeRectF()
+    plugin._border_stroke = 3.0
+    plugin._theme = FakeTheme
+    return plugin
+
+
+def test_border_draws_inside_bounds_for_bot():
+    plugin = make_border_plugin()
+    receiver = FakeDrawReceiver()
+    canvas = FakeCanvas()
+    plugin._draw_bot_border(canvas, receiver)
+    assert len(canvas.calls) == 1
+    rect, rx, ry, paint = canvas.calls[0]
+    assert (rect.left, rect.top, rect.right, rect.bottom) == (11.5, 21.5, 108.5, 118.5)
+    assert rx == 11.0 and ry == 11.0
+    assert paint.stroke_width == 3.0
+    assert (paint.color >> 24) == int(0xFF * 0.45)
+
+
+def test_border_skips_unmarked_and_transparent_avatars():
+    plugin = make_border_plugin()
+    canvas = FakeCanvas()
+    unmarked = FakeDrawReceiver(mark=None)
+    plugin._draw_bot_border(canvas, unmarked)
+    transparent = FakeDrawReceiver()
+    transparent.alpha = 0.0
+    plugin._draw_bot_border(canvas, transparent)
+    assert canvas.calls == []
+
+
+def test_border_hook_skips_background_holder_and_failed_draw():
+    plugin = make_border_plugin()
+    receiver = FakeDrawReceiver()
+    hook = module._BorderDrawHook(plugin)
+    canvas = FakeCanvas()
+    hook.after_hooked_method(FakeParam(receiver, [canvas, object()], True))
+    hook.after_hooked_method(FakeParam(receiver, [canvas, None], False))
+    assert canvas.calls == []
+    hook.after_hooked_method(FakeParam(receiver, [canvas, None], True))
+    assert len(canvas.calls) == 1
+
+
 class FakeReflectedParameter:
     def __init__(self, name):
         self.name = name
@@ -260,8 +400,9 @@ class FakeReflectedMethod:
         self.accessible = bool(value)
 
 
-class FakeClassProxy:
-    """Expose only getDeclaredMethods, like the runtime class proxy."""
+class FakeJavaClass:
+    """A java.lang.Class instance carrying reflected methods."""
+
     def __init__(self, methods):
         self.methods = methods
 
@@ -269,10 +410,26 @@ class FakeClassProxy:
         return self.methods
 
 
+class FakeRuntimeClassProxy:
+    """A jclass wrapper: getClass() returns the Class, no Class methods."""
+
+    def __init__(self, methods):
+        self.java_class = FakeJavaClass(methods)
+
+    def getClass(self):
+        return self.java_class
+
+
+def test_class_proxy_normalization():
+    proxy = FakeRuntimeClassProxy([])
+    assert not hasattr(proxy, "getDeclaredMethods")
+    assert module._as_java_class(proxy) is proxy.java_class
+
+
 def test_exact_method_overload_resolution():
     wrong = FakeReflectedMethod("setImage", ("java.lang.String",))
     expected = FakeReflectedMethod("setImage", ("java.lang.String", "int"))
-    clazz = FakeClassProxy([wrong, expected])
+    clazz = FakeRuntimeClassProxy([wrong, expected])
     found = module._find_declared_method(
         clazz, "setImage", ("java.lang.String", "int")
     )
@@ -281,8 +438,54 @@ def test_exact_method_overload_resolution():
     assert not wrong.accessible
 
 
+def test_bind_and_dialog_signatures_via_runtime_proxy():
+    bind = FakeReflectedMethod(
+        "setForUserOrChat",
+        (
+            "org.telegram.tgnet.TLObject",
+            "android.graphics.drawable.Drawable",
+            "java.lang.Object",
+            "boolean",
+            "int",
+            "boolean",
+        ),
+    )
+    update = FakeReflectedMethod("update", ("int", "boolean"))
+    draw = FakeReflectedMethod(
+        "draw",
+        (
+            "android.graphics.Canvas",
+            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+        ),
+    )
+    proxy = FakeRuntimeClassProxy([bind, update, draw])
+    assert module._find_declared_method(
+        proxy,
+        "setForUserOrChat",
+        (
+            "org.telegram.tgnet.TLObject",
+            "android.graphics.drawable.Drawable",
+            "java.lang.Object",
+            "boolean",
+            "int",
+            "boolean",
+        ),
+    ) is bind
+    assert module._find_declared_method(
+        proxy, "update", ("int", "boolean")
+    ) is update
+    assert module._find_declared_method(
+        proxy,
+        "draw",
+        (
+            "android.graphics.Canvas",
+            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+        ),
+    ) is draw
+
+
 def test_missing_method_overload_returns_none():
-    clazz = FakeClassProxy([FakeReflectedMethod("update", ("int",))])
+    clazz = FakeRuntimeClassProxy([FakeReflectedMethod("update", ("int",))])
     assert module._find_declared_method(
         clazz, "update", ("int", "boolean")
     ) is None

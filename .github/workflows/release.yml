@@ -1,0 +1,118 @@
+name: Release
+
+# The tag must already exist. This workflow never creates or moves a tag;
+# `gh release create --verify-tag` is the final guard.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Validate tag and run CI checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the release tag and main
+        run: |
+          git fetch --no-tags origin \
+            "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" \
+            "+refs/heads/main:refs/remotes/origin/main"
+
+      - name: Require the tag commit to be on main
+        run: git merge-base --is-ancestor HEAD refs/remotes/origin/main
+
+      - name: Validate tag, version, and commit
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python scripts/package_release.py --check --tag "$GITHUB_REF_NAME"
+
+      - name: Check plugin syntax
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python - <<'PY'
+          import py_compile
+
+          py_compile.compile(
+              "Botile.plugin",
+              cfile="/tmp/Botile.plugin.pyc",
+              doraise=True,
+          )
+          print("plugin syntax OK")
+          PY
+
+      - name: Run state-preservation checks
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/test_state_preservation.py
+
+  release:
+    name: Package and publish
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Fetch the release tag and main
+        run: |
+          git fetch --no-tags origin \
+            "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" \
+            "+refs/heads/main:refs/remotes/origin/main"
+
+      - name: Require the tag commit to be on main
+        run: git merge-base --is-ancestor HEAD refs/remotes/origin/main
+
+      - name: Package release assets
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python scripts/package_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --output-dir dist
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Botile ${VERSION}" \
+            --generate-notes \
+            --verify-tag \
+            "dist/Botile-${VERSION}.plugin" \
+            "dist/SHA256SUMS"
