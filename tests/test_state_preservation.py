@@ -280,8 +280,9 @@ class FakeTheme:
 
     @staticmethod
     def multAlpha(color, multiply):
-        alpha = int((color >> 24) * multiply) & 0xFF
-        return (alpha << 24) | (color & 0xFFFFFF)
+        unsigned = color & 0xFFFFFFFF
+        alpha = int(((unsigned >> 24) & 0xFF) * multiply) & 0xFF
+        return (alpha << 24) | (unsigned & 0xFFFFFF)
 
 
 class FakeDrawReceiver(FakeReceiver):
@@ -358,7 +359,7 @@ def test_frame_settings_control_border():
     _, _, _, paint = canvas.calls[0]
     assert paint.stroke_width == 6.0
     assert (paint.color & 0xFFFFFF) == 0xFFFFFF
-    assert (paint.color >> 24) == int(0xFF * 0.45)
+    assert ((paint.color & 0xFFFFFFFF) >> 24) == int(0xFF * 0.45)
 
     plugin.settings["frame_enabled"] = False
     plugin._draw_border(canvas, FakeDrawReceiver())
@@ -408,6 +409,92 @@ def test_language_selection_and_color_labels():
     plugin._app_language = lambda: "ru"
     assert plugin._text("Frame", "Рамка") == "Рамка"
     assert plugin._frame_color_label(1) == "Акцент"
+
+
+def test_argb_values_are_signed_int32():
+    assert module._signed_color(0xFFFFFFFF) == -1
+    assert module._signed_color(0xFF000000) == -16777216
+    assert module._signed_color(0xFF808080) == -8355712
+    plugin = make_plugin()
+    plugin._theme = None
+    values = [plugin._frame_color(i) for i in range(4)]
+    assert values == [-8355712, -8355712, -1, -16777216]
+
+
+def test_swatch_drawables_receive_signed_colors_and_fallback():
+    android = types.ModuleType("android")
+    graphics = types.ModuleType("android.graphics")
+    drawable_module = types.ModuleType("android.graphics.drawable")
+    org = types.ModuleType("org")
+    telegram = types.ModuleType("org.telegram")
+    messenger = types.ModuleType("org.telegram.messenger")
+    actionbar = types.ModuleType("org.telegram.ui.ActionBar")
+
+    class FakeGradientDrawable:
+        OVAL = 0
+
+        def __init__(self):
+            self.color = None
+            self.stroke_color = None
+
+        def setShape(self, value):
+            pass
+
+        def setColor(self, value):
+            self.color = value
+
+        def setStroke(self, width, color):
+            self.stroke_color = color
+
+    class Theme:
+        key_windowBackgroundWhiteBlackText = 1
+        key_chat_messagePanelSend = 2
+
+        @staticmethod
+        def getColor(key):
+            return -1 if key == 1 else -2
+
+        @staticmethod
+        def multAlpha(color, alpha):
+            return color
+
+    drawable_module.GradientDrawable = FakeGradientDrawable
+    android.graphics = graphics
+    graphics.drawable = drawable_module
+    messenger.AndroidUtilities = types.SimpleNamespace(dp=lambda value: int(value * 3))
+    actionbar.Theme = Theme
+    telegram.messenger = messenger
+    org.telegram = telegram
+    telegram.ui = types.SimpleNamespace(ActionBar=actionbar)
+    modules = {
+        "android": android,
+        "android.graphics": graphics,
+        "android.graphics.drawable": drawable_module,
+        "org": org,
+        "org.telegram": telegram,
+        "org.telegram.messenger": messenger,
+        "org.telegram.ui": types.SimpleNamespace(ActionBar=actionbar),
+        "org.telegram.ui.ActionBar": actionbar,
+    }
+    old = {name: sys.modules.get(name) for name in modules}
+    sys.modules.update(modules)
+    try:
+        plugin = make_plugin()
+        plugin._theme = Theme
+        helper = module._FrameSettingsViewFactory(plugin)
+        white = helper._swatch_drawable(module.FRAME_COLOR_WHITE, True)
+        assert white.color == -1
+        assert -2**31 <= white.stroke_color <= 2**31 - 1
+        plugin._theme = None
+        fallback = helper._swatch_drawable(module.FRAME_COLOR_THEME, False)
+        assert fallback.color == -8355712
+        assert -2**31 <= fallback.stroke_color <= 2**31 - 1
+    finally:
+        for name, value in old.items():
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
 
 
 def test_continuous_slider_updates_label_and_defers_persistence():
@@ -470,7 +557,7 @@ def test_border_draws_inside_bounds_and_skips_non_bots():
     assert (rect.left, rect.top, rect.right, rect.bottom) == (11.5, 21.5, 108.5, 118.5)
     assert rx == 11.0 and ry == 11.0
     assert paint.stroke_width == 3.0
-    assert (paint.color >> 24) == int(0xFF * 0.45)
+    assert ((paint.color & 0xFFFFFFFF) >> 24) == int(0xFF * 0.45)
 
     plugin._draw_border(canvas, FakeDrawReceiver(mark=None))
     transparent = FakeDrawReceiver()

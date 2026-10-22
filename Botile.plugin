@@ -120,6 +120,12 @@ MARK_CONDITION = (
 BORDER_CONDITION = MARK_CONDITION + ' && args[1] == null'
 
 
+def _signed_color(value):
+    """Convert an ARGB value to the signed int32 expected by Java."""
+    value = int(value) & 0xFFFFFFFF
+    return value - 0x100000000 if value & 0x80000000 else value
+
+
 def _is_bot(entity):
     try:
         return bool(entity.bot)
@@ -299,7 +305,7 @@ class _FrameSettingsViewFactory:
         color_title.setText(self.plugin._text("Frame color", "Цвет рамки"))
         color_title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
         color_title.setTextColor(
-            Theme.getColor(Theme.key_windowBackgroundWhiteBlackText)
+            _signed_color(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
         )
         color_row.addView(
             color_title, LinearLayout.LayoutParams(0, -2, 1.0)
@@ -330,11 +336,13 @@ class _FrameSettingsViewFactory:
             self.plugin._text("Frame thickness", "Толщина рамки")
         )
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
-        title.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
+        title.setTextColor(
+            _signed_color(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
+        )
         self.value_label = TextView(context)
         self.value_label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
         self.value_label.setTextColor(
-            Theme.getColor(Theme.key_windowBackgroundWhiteBlueHeader)
+            _signed_color(Theme.getColor(Theme.key_windowBackgroundWhiteBlueHeader))
         )
         self.value_label.setGravity(Gravity.RIGHT)
         title_row.addView(title, LinearLayout.LayoutParams(0, -2, 1.0))
@@ -391,7 +399,7 @@ class _FrameSettingsViewFactory:
 
         drawable = GradientDrawable()
         drawable.setShape(GradientDrawable.OVAL)
-        drawable.setColor(self.plugin._frame_color(index))
+        drawable.setColor(_signed_color(self.plugin._frame_color(index)))
         if selected:
             stroke = AndroidUtilities.dp(2)
             color = (
@@ -404,7 +412,7 @@ class _FrameSettingsViewFactory:
             color = Theme.multAlpha(
                 Theme.getColor(Theme.key_windowBackgroundWhiteBlackText), 0.30
             )
-        drawable.setStroke(stroke, color)
+        drawable.setStroke(stroke, _signed_color(color))
         return drawable
 
 
@@ -917,14 +925,18 @@ class BotilePlugin(BasePlugin):
 
     def _frame_color(self, index):
         if index == FRAME_COLOR_WHITE:
-            return 0xFFFFFFFF
+            return _signed_color(0xFFFFFFFF)
         if index == FRAME_COLOR_BLACK:
-            return 0xFF000000
+            return _signed_color(0xFF000000)
         if self._theme is None:
-            return 0xFF808080
+            return _signed_color(0xFF808080)
         if index == FRAME_COLOR_ACCENT:
-            return self._theme.getColor(self._theme.key_chat_messagePanelSend)
-        return self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
+            return _signed_color(
+                self._theme.getColor(self._theme.key_chat_messagePanelSend)
+            )
+        return _signed_color(
+            self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
+        )
 
     def _draw_border(self, canvas, receiver):
         if (
@@ -971,7 +983,9 @@ class BotilePlugin(BasePlugin):
         radius = max(0.0, min(radius, min(rect.width(), rect.height()) * 0.5))
         color = self._frame_color(color_index)
         self._border_paint.setColor(
-            self._theme.multAlpha(color, BOT_BORDER_ALPHA * alpha)
+            _signed_color(
+                self._theme.multAlpha(color, BOT_BORDER_ALPHA * alpha)
+            )
         )
         self._border_paint.setStrokeWidth(stroke)
         canvas.drawRoundRect(rect, radius, radius, self._border_paint)
