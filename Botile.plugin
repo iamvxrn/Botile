@@ -19,7 +19,7 @@ __id__ = "botile"
 __name__ = "Botile"
 __description__ = "Give bots a distinct avatar shape."
 __author__ = "Botile contributors"
-__version__ = "1.1.3"
+__version__ = "1.2.0"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.10.6"
 __sdk_version__ = ">=1.4.5.3"
@@ -28,6 +28,18 @@ __permissions__ = ["hooks"]
 BOT_CORNER_RADIUS_DP = 11
 BOT_BORDER_WIDTH_DP = 1.0
 BOT_BORDER_ALPHA = 0.45
+BOT_BORDER_MIN_DP = 0.5
+BOT_BORDER_MAX_DP = 3.0
+FRAME_COLOR_THEME = 0
+FRAME_COLOR_ACCENT = 1
+FRAME_COLOR_WHITE = 2
+FRAME_COLOR_BLACK = 3
+FRAME_COLOR_ITEMS = (
+    "Theme / Тема",
+    "Accent / Акцент",
+    "White / Белая",
+    "Black / Чёрная",
+)
 MARKER = "botile:bot"
 
 # Direct ImageReceiver.setImage() avatar parents. These do not use
@@ -229,6 +241,35 @@ class BotilePlugin(BasePlugin):
     _theme = None
     _local = None
     _lock = None
+
+    def create_settings(self):
+        from ui.settings import Header, Selector, Slider, Switch
+
+        return [
+            Header("Bot avatar frame / Рамка аватара"),
+            Switch(
+                key="frame_enabled",
+                text="Show frame / Показывать рамку",
+                default=True,
+                subtext="Bot avatars only / Только для ботов",
+            ),
+            Selector(
+                key="frame_color",
+                text="Frame color / Цвет рамки",
+                default=FRAME_COLOR_THEME,
+                items=list(FRAME_COLOR_ITEMS),
+                subtext="Theme follows light/dark / Тема следует оформлению",
+            ),
+            Slider(
+                key="frame_thickness",
+                text="Frame thickness / Толщина рамки",
+                default=BOT_BORDER_WIDTH_DP,
+                min=BOT_BORDER_MIN_DP,
+                max=BOT_BORDER_MAX_DP,
+                step=0.5,
+                subtext="0.5–3.0 dp / 0.5–3.0 dp",
+            ),
+        ]
 
     def on_plugin_load(self):
         self._unhooks = []
@@ -659,6 +700,37 @@ class BotilePlugin(BasePlugin):
 
     # ---- border -----------------------------------------------------------
 
+    def _frame_config(self):
+        try:
+            enabled = self.get_setting("frame_enabled", True)
+        except Exception:
+            enabled = True
+        enabled = True if enabled is None else bool(enabled)
+
+        try:
+            color = int(self.get_setting("frame_color", FRAME_COLOR_THEME))
+        except Exception:
+            color = FRAME_COLOR_THEME
+        color = max(0, min(len(FRAME_COLOR_ITEMS) - 1, color))
+
+        try:
+            thickness = float(
+                self.get_setting("frame_thickness", BOT_BORDER_WIDTH_DP)
+            )
+        except Exception:
+            thickness = BOT_BORDER_WIDTH_DP
+        thickness = max(BOT_BORDER_MIN_DP, min(BOT_BORDER_MAX_DP, thickness))
+        return enabled, color, thickness
+
+    def _frame_color(self, index):
+        if index == FRAME_COLOR_ACCENT:
+            return self._theme.getColor(self._theme.key_chat_messagePanelSend)
+        if index == FRAME_COLOR_WHITE:
+            return 0xFFFFFFFF
+        if index == FRAME_COLOR_BLACK:
+            return 0xFF000000
+        return self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
+
     def _draw_border(self, canvas, receiver):
         if (
             canvas is None
@@ -668,6 +740,9 @@ class BotilePlugin(BasePlugin):
             or self._theme is None
             or not self._is_marked(receiver)
         ):
+            return
+        enabled, color_index, thickness = self._frame_config()
+        if not enabled:
             return
         try:
             width = float(receiver.getImageWidth())
@@ -683,7 +758,7 @@ class BotilePlugin(BasePlugin):
         alpha = max(0.0, min(1.0, alpha))
         if alpha <= 0.01:
             return
-        stroke = self._border_stroke
+        stroke = max(1.0, self._border_stroke * thickness)
         if width <= stroke or height <= stroke:
             return
         inset = stroke * 0.5
@@ -699,7 +774,7 @@ class BotilePlugin(BasePlugin):
         except Exception:
             pass
         radius = max(0.0, min(radius, min(rect.width(), rect.height()) * 0.5))
-        color = self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
+        color = self._frame_color(color_index)
         self._border_paint.setColor(
             self._theme.multAlpha(color, BOT_BORDER_ALPHA * alpha)
         )

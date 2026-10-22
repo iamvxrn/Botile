@@ -35,6 +35,9 @@ class MethodHook:
 class BasePlugin:
     id = "botile"
 
+    def get_setting(self, key, default=None):
+        return getattr(self, "settings", {}).get(key, default)
+
 
 base_plugin = types.ModuleType("base_plugin")
 base_plugin.BasePlugin = BasePlugin
@@ -141,6 +144,7 @@ def make_plugin():
     plugin._errors = set()
     plugin._first_bind_logged = False
     plugin._unknown_parent_logged = False
+    plugin.settings = {}
     return plugin
 
 
@@ -323,6 +327,73 @@ def make_border_plugin():
     plugin._border_stroke = 3.0
     plugin._theme = FakeTheme
     return plugin
+
+
+def test_frame_settings_defaults_and_clamps():
+    plugin = make_plugin()
+    assert plugin._frame_config() == (True, 0, 1.0)
+    plugin.settings = {
+        "frame_enabled": False,
+        "frame_color": 99,
+        "frame_thickness": 0.1,
+    }
+    assert plugin._frame_config() == (False, 3, 0.5)
+    plugin.settings = {"frame_thickness": 99.0}
+    assert plugin._frame_config() == (True, 0, 3.0)
+
+
+def test_frame_settings_control_border():
+    plugin = make_border_plugin()
+    plugin.settings = {
+        "frame_enabled": True,
+        "frame_color": 2,
+        "frame_thickness": 2.0,
+    }
+    canvas = FakeCanvas()
+    plugin._draw_border(canvas, FakeDrawReceiver())
+    assert len(canvas.calls) == 1
+    _, _, _, paint = canvas.calls[0]
+    assert paint.stroke_width == 6.0
+    assert (paint.color & 0xFFFFFF) == 0xFFFFFF
+    assert (paint.color >> 24) == int(0xFF * 0.45)
+
+    plugin.settings["frame_enabled"] = False
+    plugin._draw_border(canvas, FakeDrawReceiver())
+    assert len(canvas.calls) == 1
+
+
+def test_create_settings_uses_supported_ui_items():
+    ui_module = types.ModuleType("ui")
+    settings_module = types.ModuleType("ui.settings")
+
+    class Item:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.__dict__.update(kwargs)
+
+    for name in ("Header", "Selector", "Slider", "Switch"):
+        setattr(settings_module, name, Item)
+    ui_module.settings = settings_module
+    old_ui = sys.modules.get("ui")
+    old_settings = sys.modules.get("ui.settings")
+    sys.modules["ui"] = ui_module
+    sys.modules["ui.settings"] = settings_module
+    try:
+        items = module.BotilePlugin().create_settings()
+        by_key = {item.key: item for item in items if hasattr(item, "key")}
+        assert by_key["frame_enabled"].default is True
+        assert by_key["frame_color"].items[0] == "Theme / Тема"
+        assert by_key["frame_thickness"].min == 0.5
+        assert by_key["frame_thickness"].max == 3.0
+    finally:
+        if old_ui is None:
+            sys.modules.pop("ui", None)
+        else:
+            sys.modules["ui"] = old_ui
+        if old_settings is None:
+            sys.modules.pop("ui.settings", None)
+        else:
+            sys.modules["ui.settings"] = old_settings
 
 
 def test_border_draws_inside_bounds_and_skips_non_bots():

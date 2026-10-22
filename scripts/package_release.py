@@ -85,7 +85,7 @@ def display_path(path):
 def main():
     parser = argparse.ArgumentParser(description="Validate/package Botile.")
     parser.add_argument("--check", action="store_true", help="validate only")
-    parser.add_argument("--tag", help="tag to validate, e.g. v1.1.3")
+    parser.add_argument("--tag", help="tag to validate, e.g. v1.2.0")
     parser.add_argument("--output-dir", default="dist", help="output directory")
     args = parser.parse_args()
 
