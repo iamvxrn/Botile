@@ -1,144 +1,73 @@
 #!/usr/bin/env python3
-"""Validate Botile metadata and package a tagged release.
-
-This script never creates or moves a Git tag. It refuses to package unless the
-requested tag already exists and points at the checked-out commit.
-
-Usage:
-    python3 scripts/package_release.py --check
-    python3 scripts/package_release.py --tag v1.1.3 --output-dir dist
-"""
-
-from __future__ import annotations
+"""Validate Botile metadata and build a distributable plugin asset."""
 
 import argparse
 import ast
 import hashlib
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "Botile.plugin"
 VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 TAG_RE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-META_NAMES = {
+FIELDS = (
     "__id__",
     "__name__",
     "__version__",
     "__app_version__",
     "__sdk_version__",
     "__permissions__",
-}
+)
 
 
-def fail(message: str) -> NoReturn:
-    print(f"error: {message}", file=sys.stderr)
+def fail(message):
+    print("error: " + message, file=sys.stderr)
     raise SystemExit(2)
 
 
-def read_metadata(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        fail(f"plugin file not found: {path}")
-
+def read_metadata():
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(PLUGIN.read_text(encoding="utf-8"), filename=str(PLUGIN))
     except (OSError, SyntaxError) as error:
-        fail(f"cannot parse {path}: {error}")
+        fail("cannot parse Botile.plugin: %s" % error)
 
-    metadata: dict[str, object] = {}
+    values = {}
     for node in tree.body:
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target = node.targets[0]
-        if not isinstance(target, ast.Name) or target.id not in META_NAMES:
+        if not isinstance(target, ast.Name) or target.id not in FIELDS:
             continue
-        if target.id in metadata:
-            fail(f"duplicate top-level metadata assignment: {target.id}")
+        if target.id in values:
+            fail("duplicate metadata: " + target.id)
         try:
-            metadata[target.id] = ast.literal_eval(node.value)
+            values[target.id] = ast.literal_eval(node.value)
         except (TypeError, ValueError) as error:
-            fail(f"metadata {target.id} must be a literal: {error}")
+            fail("metadata %s must be a literal: %s" % (target.id, error))
 
-    missing = sorted(META_NAMES - metadata.keys())
+    missing = sorted(set(FIELDS) - values.keys())
     if missing:
-        fail("missing top-level metadata: " + ", ".join(missing))
-
-    version = metadata["__version__"]
-    if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
-        fail("__version__ must be a strict MAJOR.MINOR.PATCH version")
-
-    for key in ("__app_version__", "__sdk_version__"):
-        value = metadata[key]
-        if not isinstance(value, str) or not value.strip():
-            fail(f"{key} must be a non-empty string")
-
-    permissions = metadata["__permissions__"]
-    if not isinstance(permissions, (list, tuple)) or not all(
-        isinstance(item, str) for item in permissions
+        fail("missing metadata: " + ", ".join(missing))
+    if values["__id__"] != "botile":
+        fail("__id__ must be botile")
+    if not isinstance(values["__version__"], str) or not VERSION_RE.fullmatch(
+        values["__version__"]
     ):
-        fail("__permissions__ must be a list of strings")
-    if "hooks" not in permissions:
-        fail("__permissions__ must declare the hooks permission")
-
-    if metadata["__id__"] != "botile":
-        fail("__id__ must remain botile")
-
-    return metadata
-
-
-def tag_version(tag: str) -> str:
-    match = TAG_RE.fullmatch(tag)
-    if not match:
-        fail(f"tag must be strict vMAJOR.MINOR.PATCH, got: {tag}")
-    return ".".join(match.groups())
+        fail("__version__ must be strict MAJOR.MINOR.PATCH")
+    for key in ("__app_version__", "__sdk_version__"):
+        value = values[key]
+        if not isinstance(value, str) or not value.strip():
+            fail("%s must be a non-empty string" % key)
+    permissions = values["__permissions__"]
+    if not isinstance(permissions, (list, tuple)) or "hooks" not in permissions:
+        fail("__permissions__ must declare hooks")
+    return values
 
 
-def git(*args: str, allow_missing: bool = False) -> str | None:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        if allow_missing:
-            return None
-        fail(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout.strip()
-
-
-def require_existing_tag(tag: str) -> None:
-    tag_ref = f"refs/tags/{tag}^{{commit}}"
-    tag_commit = git("rev-parse", "--verify", tag_ref, allow_missing=True)
-    if not tag_commit:
-        fail(
-            f"tag {tag} does not exist locally; create and review it manually "
-            "before packaging (this script never creates tags)"
-        )
-
-    head = git("rev-parse", "HEAD")
-    if head != tag_commit:
-        fail(
-            f"HEAD {head} is not the commit for tag {tag} ({tag_commit}); "
-            "check out the reviewed tag before packaging"
-        )
-
-
-def require_clean_worktree() -> None:
-    status = git("status", "--porcelain", "--untracked-files=all")
-    if status:
-        fail(
-            "working tree is not clean; commit or stash changes before packaging "
-            "a release"
-        )
-
-
-def sha256(path: Path) -> str:
+def sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
@@ -146,77 +75,49 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def display_path(path: Path) -> str:
+def display_path(path):
     try:
-        return str(path.relative_to(ROOT))
+        return path.relative_to(ROOT)
     except ValueError:
-        return str(path)
+        return path
 
 
-def package(version: str, output_dir: Path) -> None:
-    require_clean_worktree()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    asset_name = f"Botile-{version}.plugin"
-    destination = output_dir / asset_name
-    source_digest = sha256(PLUGIN)
-    shutil.copyfile(PLUGIN, destination)
-    destination_digest = sha256(destination)
-    if source_digest != destination_digest:
-        fail("packaged asset does not match Botile.plugin byte-for-byte")
-
-    checksums = output_dir / "SHA256SUMS"
-    with checksums.open("w", encoding="ascii", newline="\n") as output:
-        output.write(f"{destination_digest}  {asset_name}\n")
-
-    print(f"version={version}")
-    print(f"asset={display_path(destination)}")
-    print(f"sha256={destination_digest}")
-    print(f"checksums={display_path(checksums)}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Validate Botile release metadata or package a tagged release."
-    )
-    parser.add_argument(
-        "--tag",
-        help="existing annotated tag to validate/package, e.g. v1.1.3",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="dist",
-        help="release output directory (default: dist)",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="validate metadata only; no files are written",
-    )
+def main():
+    parser = argparse.ArgumentParser(description="Validate/package Botile.")
+    parser.add_argument("--check", action="store_true", help="validate only")
+    parser.add_argument("--tag", help="tag to validate, e.g. v1.1.3")
+    parser.add_argument("--output-dir", default="dist", help="output directory")
     args = parser.parse_args()
 
-    metadata = read_metadata(PLUGIN)
-    version = str(metadata["__version__"])
-
-    if not args.check and not args.tag:
-        fail("use --check, or pass --tag vMAJOR.MINOR.PATCH to package")
-
-    if args.tag:
-        if tag_version(args.tag) != version:
-            fail(
-                f"tag {args.tag} does not match __version__ {version} in "
-                "Botile.plugin"
-            )
-        require_existing_tag(args.tag)
-
+    metadata = read_metadata()
+    version = metadata["__version__"]
+    if args.tag is not None:
+        match = TAG_RE.fullmatch(args.tag)
+        if match is None:
+            fail("tag must be vMAJOR.MINOR.PATCH: %s" % args.tag)
+        if ".".join(match.groups()) != version:
+            fail("tag %s does not match plugin version %s" % (args.tag, version))
     if args.check:
-        print(f"release metadata OK: id={metadata['__id__']} version={version}")
+        print("metadata OK: id=%s version=%s" % (metadata["__id__"], version))
         return
 
-    output_dir = Path(args.output_dir)
-    if not output_dir.is_absolute():
-        output_dir = ROOT / output_dir
-    package(version, output_dir)
+    output = Path(args.output_dir)
+    if not output.is_absolute():
+        output = ROOT / output
+    output.mkdir(parents=True, exist_ok=True)
+
+    asset = output / ("Botile-%s.plugin" % version)
+    shutil.copyfile(PLUGIN, asset)
+    digest = sha256(asset)
+    if digest != sha256(PLUGIN):
+        fail("packaged asset does not match Botile.plugin")
+    checksums = output / "SHA256SUMS"
+    checksums.write_text(
+        "%s  %s\n" % (digest, asset.name), encoding="ascii", newline="\n"
+    )
+    print("asset=%s" % display_path(asset))
+    print("sha256=%s" % digest)
+    print("checksums=%s" % display_path(checksums))
 
 
 if __name__ == "__main__":

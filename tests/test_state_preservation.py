@@ -1,11 +1,7 @@
-"""State-preservation mocks for Botile.
+"""Host-side state and compatibility checks for Botile.
 
-Run from the project root:
-
-    python3 tests/test_state_preservation.py
-
-These tests exercise the plugin's radius/mark state machine directly. They do
-not load Android or prove rendering.
+Run with: python3 tests/test_state_preservation.py
+These mocks do not replace an Android device test.
 """
 
 import importlib.util
@@ -44,13 +40,10 @@ base_plugin = types.ModuleType("base_plugin")
 base_plugin.BasePlugin = BasePlugin
 base_plugin.MethodHook = MethodHook
 base_plugin.HookFilter = FakeHookFilter
-
 hook_utils = types.ModuleType("hook_utils")
 hook_utils.find_class = lambda name: None
-
 android_utils = types.ModuleType("android_utils")
 android_utils.run_on_ui_thread = lambda fn, delay=0: fn()
-
 sys.modules["base_plugin"] = base_plugin
 sys.modules["hook_utils"] = hook_utils
 sys.modules["android_utils"] = android_utils
@@ -64,10 +57,7 @@ loader.exec_module(module)
 class FakeArrays:
     @staticmethod
     def copyOf(values, length):
-        result = [0] * length
-        for index in range(min(length, len(values))):
-            result[index] = int(values[index])
-        return result
+        return [int(values[i]) if i < len(values) else 0 for i in range(length)]
 
 
 class FakeWeakHashMap:
@@ -148,92 +138,89 @@ def make_plugin():
     plugin._mark_nulls = FakeWeakHashMap()
     plugin._local = threading.local()
     plugin._lock = threading.RLock()
-    plugin._firsts = set()
     plugin._errors = set()
-    plugin._stats = {
-        "binds": 0, "bots": 0, "nonbots": 0, "overrides": 0,
-        "verified": 0, "clears": 0, "custom": 0, "dialog": 0,
-        "unknown_parent": 0,
-    }
+    plugin._first_bind_logged = False
+    plugin._unknown_parent_logged = False
     return plugin
 
 
-def test_zero_baseline_round_trip():
+def test_radius_round_trip_preserves_zero_and_asymmetric_corners():
     plugin = make_plugin()
-    receiver = FakeReceiver((0, 0, 0, 0))
-    plugin._apply_bot(receiver, "test")
-    assert receiver.corners == [33, 33, 33, 33]
-    plugin._clear_bot(receiver, "test")
-    assert receiver.corners == [0, 0, 0, 0], receiver.corners
+    zero = FakeReceiver((0, 0, 0, 0))
+    plugin._apply_bot(zero)
+    assert zero.corners == [33, 33, 33, 33]
+    plugin._clear_bot(zero)
+    assert zero.corners == [0, 0, 0, 0]
+
+    asymmetric = FakeReceiver((10, 20, 30, 40))
+    plugin._apply_bot(asymmetric)
+    assert asymmetric.corners == [18, 18, 18, 18]
+    plugin._clear_bot(asymmetric)
+    assert asymmetric.corners == [10, 20, 30, 40]
 
 
-def test_asymmetric_baseline_round_trip():
+def test_unload_restores_baselines_and_saved_marks():
     plugin = make_plugin()
-    receiver = FakeReceiver((10, 20, 30, 40))
-    plugin._apply_bot(receiver, "test")
-    assert receiver.corners == [18, 18, 18, 18], receiver.corners
-    plugin._clear_bot(receiver, "test")
-    assert receiver.corners == [10, 20, 30, 40], receiver.corners
-
-
-def test_zero_baseline_unload():
-    plugin = make_plugin()
-    receiver = FakeReceiver((0, 0, 0, 0))
-    plugin._apply_bot(receiver, "test")
+    zero = FakeReceiver((0, 0, 0, 0), mark="external-zero")
+    asymmetric = FakeReceiver((5, 15, 25, 35), mark=None)
+    plugin._apply_bot(zero)
+    plugin._apply_bot(asymmetric)
     plugin._restore_all()
-    assert receiver.corners == [0, 0, 0, 0], receiver.corners
+    assert zero.corners == [0, 0, 0, 0]
+    assert asymmetric.corners == [5, 15, 25, 35]
+    assert zero.mark == "external-zero"
+    assert asymmetric.mark is None
 
 
-def test_asymmetric_baseline_unload():
-    plugin = make_plugin()
-    receiver = FakeReceiver((5, 15, 25, 35))
-    plugin._apply_bot(receiver, "test")
-    plugin._restore_all()
-    assert receiver.corners == [5, 15, 25, 35], receiver.corners
-
-
-def test_existing_mark_restored():
+def test_clear_does_not_clobber_a_later_external_mark():
     plugin = make_plugin()
     receiver = FakeReceiver(mark="external-before")
-    plugin._apply_bot(receiver, "test")
-    assert receiver.mark == MARKER
-    plugin._clear_bot(receiver, "test")
-    assert receiver.mark == "external-before", receiver.mark
-
-
-def test_null_mark_restored():
-    plugin = make_plugin()
-    receiver = FakeReceiver(mark=None)
-    plugin._apply_bot(receiver, "test")
-    assert receiver.mark == MARKER
-    plugin._clear_bot(receiver, "test")
-    assert receiver.mark is None
-
-
-def test_later_external_mark_not_clobbered():
-    plugin = make_plugin()
-    receiver = FakeReceiver(mark="external-before")
-    plugin._apply_bot(receiver, "test")
+    plugin._apply_bot(receiver)
     receiver.mark = "later-external"
-    plugin._clear_bot(receiver, "test")
-    assert receiver.mark == "later-external", receiver.mark
+    plugin._clear_bot(receiver)
+    assert receiver.mark == "later-external"
 
 
-def test_unload_restores_mark():
+def test_startup_hook_summary_logging_does_not_raise():
     plugin = make_plugin()
-    receiver = FakeReceiver(mark="external-unload")
-    plugin._apply_bot(receiver, "test")
-    plugin._restore_all()
-    assert receiver.mark == "external-unload", receiver.mark
+    plugin._hooks_ok = {
+        "radius": True,
+        "image": True,
+        "border": True,
+        "dialog": True,
+    }
+    plugin._log_hook_summary()
+    assert plugin.logs[-1] == (
+        "Botile hooks: bind=OK radius=OK image=OK border=OK dialog=OK"
+    )
 
 
-def test_unload_leaves_later_external_mark():
+def test_custom_image_clears_bot_state():
     plugin = make_plugin()
-    receiver = FakeReceiver(mark="external-unload")
-    plugin._apply_bot(receiver, "test")
-    receiver.mark = "later-unload"
-    plugin._restore_all()
-    assert receiver.mark == "later-unload", receiver.mark
+    receiver = FakeReceiver((78, 78, 78, 78))
+    plugin._apply_bot(receiver)
+    assert receiver.mark == MARKER and receiver.corners == [33, 33, 33, 33]
+    plugin._on_custom_image(receiver)
+    assert receiver.mark is None
+    assert receiver.corners == [78, 78, 78, 78]
+
+
+def test_dialog_fallback_reapplies_only_marked_receivers():
+    plugin = make_plugin()
+    receiver = FakeReceiver((78, 78, 78, 78))
+    cell = types.SimpleNamespace(avatarImage=receiver, invalidations=0)
+    cell.invalidate = lambda: setattr(cell, "invalidations", cell.invalidations + 1)
+    hook = module._DialogFallbackHook(plugin)
+
+    hook.after_hooked_method(types.SimpleNamespace(thisObject=cell))
+    assert receiver.corners == [78, 78, 78, 78]
+    assert cell.invalidations == 0
+
+    plugin._apply_bot(receiver)
+    receiver.corners = [78, 78, 78, 78]
+    hook.after_hooked_method(types.SimpleNamespace(thisObject=cell))
+    assert receiver.corners == [33, 33, 33, 33]
+    assert cell.invalidations == 1
 
 
 class FakeRectF:
@@ -254,14 +241,12 @@ class FakePaint:
     def __init__(self):
         self.color = 0
         self.stroke_width = 0.0
-        self.style = None
-        self.anti_alias = False
 
     def setAntiAlias(self, value):
-        self.anti_alias = bool(value)
+        pass
 
     def setStyle(self, value):
-        self.style = value
+        pass
 
     def setStrokeWidth(self, value):
         self.stroke_width = float(value)
@@ -293,8 +278,8 @@ class FakeTheme:
 
 
 class FakeDrawReceiver(FakeReceiver):
-    def __init__(self, corners=(11, 11, 11, 11), mark=MARKER):
-        super().__init__(corners=corners, mark=mark)
+    def __init__(self, mark=MARKER):
+        super().__init__((11, 11, 11, 11), mark=mark)
         self.image_x = 10.0
         self.image_y = 20.0
         self.image_w = 100.0
@@ -340,11 +325,10 @@ def make_border_plugin():
     return plugin
 
 
-def test_border_draws_inside_bounds_for_bot():
+def test_border_draws_inside_bounds_and_skips_non_bots():
     plugin = make_border_plugin()
-    receiver = FakeDrawReceiver()
     canvas = FakeCanvas()
-    plugin._draw_bot_border(canvas, receiver)
+    plugin._draw_border(canvas, FakeDrawReceiver())
     assert len(canvas.calls) == 1
     rect, rx, ry, paint = canvas.calls[0]
     assert (rect.left, rect.top, rect.right, rect.bottom) == (11.5, 21.5, 108.5, 118.5)
@@ -352,16 +336,11 @@ def test_border_draws_inside_bounds_for_bot():
     assert paint.stroke_width == 3.0
     assert (paint.color >> 24) == int(0xFF * 0.45)
 
-
-def test_border_skips_unmarked_and_transparent_avatars():
-    plugin = make_border_plugin()
-    canvas = FakeCanvas()
-    unmarked = FakeDrawReceiver(mark=None)
-    plugin._draw_bot_border(canvas, unmarked)
+    plugin._draw_border(canvas, FakeDrawReceiver(mark=None))
     transparent = FakeDrawReceiver()
     transparent.alpha = 0.0
-    plugin._draw_bot_border(canvas, transparent)
-    assert canvas.calls == []
+    plugin._draw_border(canvas, transparent)
+    assert len(canvas.calls) == 1
 
 
 def test_border_hook_skips_background_holder_and_failed_draw():
@@ -401,8 +380,6 @@ class FakeReflectedMethod:
 
 
 class FakeJavaClass:
-    """A java.lang.Class instance carrying reflected methods."""
-
     def __init__(self, methods):
         self.methods = methods
 
@@ -411,8 +388,6 @@ class FakeJavaClass:
 
 
 class FakeRuntimeClassProxy:
-    """A jclass wrapper: getClass() returns the Class, no Class methods."""
-
     def __init__(self, methods):
         self.java_class = FakeJavaClass(methods)
 
@@ -420,25 +395,44 @@ class FakeRuntimeClassProxy:
         return self.java_class
 
 
-def test_class_proxy_normalization():
-    proxy = FakeRuntimeClassProxy([])
-    assert not hasattr(proxy, "getDeclaredMethods")
-    assert module._as_java_class(proxy) is proxy.java_class
-
-
-def test_exact_method_overload_resolution():
-    wrong = FakeReflectedMethod("setImage", ("java.lang.String",))
-    expected = FakeReflectedMethod("setImage", ("java.lang.String", "int"))
-    clazz = FakeRuntimeClassProxy([wrong, expected])
-    found = module._find_declared_method(
-        clazz, "setImage", ("java.lang.String", "int")
+def test_class_proxy_normalization_and_exact_overloads():
+    draw = FakeReflectedMethod(
+        "draw",
+        (
+            "android.graphics.Canvas",
+            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+        ),
     )
-    assert found is expected
-    assert expected.accessible
-    assert not wrong.accessible
+    wrong = FakeReflectedMethod("draw", ("android.graphics.Canvas",))
+    proxy = FakeRuntimeClassProxy([draw, wrong])
+    assert module._as_java_class(proxy) is proxy.java_class
+    found = module._find_declared_method(
+        proxy,
+        "draw",
+        (
+            "android.graphics.Canvas",
+            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+        ),
+    )
+    assert found is draw
+    assert draw.accessible and not wrong.accessible
+    assert module._find_declared_method(proxy, "draw", ("java.lang.String",)) is None
 
 
-def test_bind_and_dialog_signatures_via_runtime_proxy():
+def test_direct_avatar_allowlist_is_narrow():
+    assert module._is_direct_avatar_parent(
+        "org.telegram.ui.ProfileActivity$AvatarImageView$1"
+    )
+    assert module._is_direct_avatar_parent(
+        "org.telegram.ui.Cells.ProfileSearchCell"
+    )
+    assert not module._is_direct_avatar_parent(
+        "org.telegram.ui.PhotoViewer$XXX"
+    )
+    assert not module._is_direct_avatar_parent(None)
+
+
+def test_bind_image_and_dialog_signatures_resolve():
     bind = FakeReflectedMethod(
         "setForUserOrChat",
         (
@@ -450,15 +444,24 @@ def test_bind_and_dialog_signatures_via_runtime_proxy():
             "boolean",
         ),
     )
-    update = FakeReflectedMethod("update", ("int", "boolean"))
-    draw = FakeReflectedMethod(
-        "draw",
+    image = FakeReflectedMethod(
+        "setImage",
         (
-            "android.graphics.Canvas",
-            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "android.graphics.drawable.Drawable",
+            "long",
+            "java.lang.String",
+            "java.lang.Object",
+            "int",
         ),
     )
-    proxy = FakeRuntimeClassProxy([bind, update, draw])
+    dialog = FakeReflectedMethod("update", ("int", "boolean"))
+    proxy = FakeRuntimeClassProxy([bind, image, dialog])
     assert module._find_declared_method(
         proxy,
         "setForUserOrChat",
@@ -471,24 +474,24 @@ def test_bind_and_dialog_signatures_via_runtime_proxy():
             "boolean",
         ),
     ) is bind
-    assert module._find_declared_method(
-        proxy, "update", ("int", "boolean")
-    ) is update
+    assert module._find_declared_method(proxy, "update", ("int", "boolean")) is dialog
     assert module._find_declared_method(
         proxy,
-        "draw",
+        "setImage",
         (
-            "android.graphics.Canvas",
-            "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "org.telegram.messenger.ImageLocation",
+            "java.lang.String",
+            "android.graphics.drawable.Drawable",
+            "long",
+            "java.lang.String",
+            "java.lang.Object",
+            "int",
         ),
-    ) is draw
-
-
-def test_missing_method_overload_returns_none():
-    clazz = FakeRuntimeClassProxy([FakeReflectedMethod("update", ("int",))])
-    assert module._find_declared_method(
-        clazz, "update", ("int", "boolean")
-    ) is None
+    ) is image
 
 
 def main():

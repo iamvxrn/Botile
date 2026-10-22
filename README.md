@@ -1,455 +1,110 @@
 # Botile
 
-[![CI](https://github.com/iamvxrn/Botile/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/iamvxrn/Botile/actions/workflows/ci.yml)
-[![Release](https://github.com/iamvxrn/Botile/actions/workflows/release.yml/badge.svg)](https://github.com/iamvxrn/Botile/actions/workflows/release.yml)
-[![GitHub Releases](https://img.shields.io/badge/releases-GitHub-2f81f7)](https://github.com/iamvxrn/Botile/releases)
+[Русская версия](README.ru.md)
 
-**Give bots a distinct avatar shape.**
+Botile renders Telegram bot avatars as rounded squares with a thin
+theme-adaptive outline. Regular users, groups, channels, and custom images keep
+the radius chosen by the client.
 
-[Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Validation](VALIDATION.md)
+Current version: **1.1.3**.
 
-Version **1.1.3**. Botile renders Telegram bot avatars as rounded squares with
-a thin theme-adaptive outline while leaving regular users, groups, channels,
-and custom images at the radius the client chose.
+## Install
 
-## Update / install
-
-1. From a published release, download `Botile-<version>.plugin` and verify it
-   against `SHA256SUMS`; the asset is byte-identical to `Botile.plugin`. For
-   this checkout, install `Botile.plugin` directly. Install over the existing
-   Botile installation. If your client keeps the old file, uninstall Botile
-   first and install this file again.
-2. On the install sheet, check **Java hooks (full control)**. Botile cannot
-   modify Java views without the `hooks` permission. If you install without it,
-   Botile logs a clear message and stays inactive.
-3. Enable Botile.
-4. Confirm the loaded file is actually 1.1.3. The plugin log should begin with:
-
-   ```text
-   Botile 1.1.3 starting (installed metadata version=1.1.3)
-   ```
+1. Install `Botile-<version>.plugin` from a release, or `Botile.plugin` from a
+   checkout. The release asset is a byte-for-byte copy of `Botile.plugin`; verify
+   it against `SHA256SUMS` when one is provided.
+2. Select **Java hooks (full control)** on the install sheet and keep Botile at
+   **Trusted**. Without the `hooks` permission the plugin stays inactive.
+3. Enable Botile and confirm the log starts with
+   `Botile 1.1.3 starting`.
+4. If an old Botile file remains installed, uninstall it and install the new
+   file again.
 
 No root, LSPosed, APK modification, network access, or extra Python packages are
-used. The only declared permission is `hooks`, implemented by exteraless's
-in-process Aliuhook plugin runtime.
+needed. The only declared permission is `hooks`.
 
-### Version range
+## Compatibility
 
-The metadata minimum is set to the build actually inspected and verified at the
-API level:
+- exteraless `>= 12.10.6`
+- plugin SDK `>= 1.4.5.3`
 
-- `__app_version__ = ">=12.10.6"`
-- `__sdk_version__ = ">=1.4.5.3"`
+The target methods and signatures were checked against exteraless
+`12.10.6-00c14f4` (SDK `1.4.5.3`). The same hook surface was also checked in
+the current source (`13.0.2`, SDK `1.4.5.7`), so the declared range is
+source-compatible. This is not a claim that every UI surface has been verified
+on every build.
 
-The same classes/methods/signatures were also inspected in the current source
-(`13.0.2`, SDK `1.4.5.7`), so that range is source-compatible. An older
-documentation baseline (`12.5.1` / SDK `1.4.4.3`) was **not** verified for this
-plugin's exact hook and filter surface, so Botile does not claim it. This is a
-metadata/range statement, not proof that either build renders correctly on a
-phone.
+## What it does
 
-## Releases and verification
+- Bot detection comes from the `TLRPC.User`/`TLRPC.Chat` entity passed to
+  `ImageReceiver.setForUserOrChat(...)`.
+- Marked bot receivers are forced to the Botile radius through
+  `ImageReceiver.setRoundRadius(int[])`. The original four-corner radius,
+  including zero and asymmetric values, is saved and restored.
+- Profile headers and search results that pass the entity through
+  `ImageReceiver.setImage(..., parentObject=...)` are supported through a
+  narrow parent allowlist.
+- `setImageBitmap(...)` and custom `setImage(...)` calls clear bot state.
+- A thin outline is added after `ImageReceiver.draw(Canvas,
+  BackgroundThreadDrawHolder)`: 1 dp inside the image bounds, following the
+  current corner radius, using `Theme.key_windowBackgroundWhiteBlackText` at 45%
+  alpha. Non-bots are filtered out before the Python callback.
+- All hooks are removed and tracked radii/marks are restored on unload.
 
-Published builds are attached to [GitHub Releases](https://github.com/iamvxrn/Botile/releases):
+The outer avatar shape is always left to the client for non-bots. Botile does
+not replace the image, view, drawable, or renderer.
 
-- `Botile-<version>.plugin` is the installable asset and is byte-identical to
-  the tagged `Botile.plugin`;
-- `SHA256SUMS` contains its SHA-256 checksum; run `sha256sum -c SHA256SUMS`
-  before installing.
+## Limitations
 
-The `Release` workflow runs only for an existing `vMAJOR.MINOR.PATCH` tag. It
-re-runs the CI checks, requires the tag to match `__version__` exactly, and
-publishes generated release notes. It does not create or move tags; see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the reviewed tag procedure.
+- Bot profile vector/video avatars set only through `setImageBitmap(...)` have
+  no entity at that call site and may not be covered.
+- Full-screen photos and notifications are not avatar targets.
+- Background-thread draws with a non-null holder are skipped by the outline.
+- The outline uses the global theme color, not a per-chat `ResourcesProvider`.
+- Enabling Botile does not force a global list reload; cells update on their next
+  bind or update.
+- Host-side mocks do not prove Android rendering. Device testing is still
+  required after runtime changes.
 
-There is no 1.1.2 source commit or release. Release status and source history
-are recorded in [CHANGELOG.md](CHANGELOG.md).
+## Development
 
-## What changed from 1.0
-
-v1 was not device-verified. It installed but produced no visible change, and on
-a successful load it logged only the load-time line `Botile active` — no
-invocation, entity, or radius evidence.
-
-I inspected the actual exteraless APK found on this machine:
-
-- APK: `exteraless-v12.10.6-00c14f4(1261).apk`
-- package: `com.exteraless.app`
-- app version: `12.10.6-00c14f4`
-- plugin SDK version: `1.4.5.3`
-- Python: `3.11`
-
-The APK contains the exact target v1 used:
-
-- `org.telegram.ui.Cells.DialogCell.update(int, boolean)` — `(I Z)Z`
-- `DialogCell.avatarImage: ImageReceiver` (public)
-- `DialogCell.user: TLRPC.User` (private)
-- `DialogCell.customDialog` (private)
-- `org.telegram.messenger.ImageReceiver.setRoundRadius(int)` — `(I)V`
-- `ImageReceiver.setRoundRadius(int[])` — `([I)V`
-- `ImageReceiver.setAvatarCornersApplied(boolean)` — `(Z)V`
-- `org.telegram.tgnet.TLRPC$User.bot` (public boolean)
-
-So the v1 failure was **not** an invented class, method, field, or version
-rejection. It was a silent runtime failure. The remaining candidates all looked
-identical from the outside:
-
-1. the `hooks` permission was not granted / the plugin was not trusted;
-2. native hook initialization was disabled or broken;
-3. the hook was registered but never invoked;
-4. v1's private-field reflection returned `None`;
-5. the radius was applied but overwritten later.
-
-v1 logged only load-time text. It did not log whether the hook was invoked,
-which entity it saw, or whether the radius override stuck, so in practice the
-failure was silent. This version removes v1's private-field dependency entirely
-and logs hook registration, first invocation, bot detection, radius overrides,
-read-back radius, custom-image clearing, and failures. **A device log is still
-required before calling the visual problem fixed.**
-
-## Runtime history and the 1.1.3 outline
-
-The 1.1.0 device log from exteraless 12.10.6 (`00c14f4`) showed that startup
-stopped before registering hooks because the class proxy had no singular
-`getDeclaredMethod()`. Version 1.1.1 changed that call to
-`getDeclaredMethods()`, but that method is also an instance method of
-`java.lang.Class` and is not exposed on `find_class()`'s `java.jclass(...)`
-proxy. Source inspection of the exact SDK confirms that `find_class()` returns
-the Python class wrapper and that the SDK's own `hook_utils._as_class()`
-normalizes it to `java.lang.Class` before reflection; `BasePlugin.hook_method()`
-uses that helper.
-
-Version 1.1.2 normalized the class proxy first, then selected the exact overload
-and passed the reflected method to `hook_method()`. The user reports 1.1.2 works.
-Version 1.1.3 keeps that path and adds the optional theme-adaptive outline
-described below. The outline itself has not yet been verified on the phone.
-
-## Coverage matrix
-
-| UI surface | Implementation | Status |
-|---|---|---|
-| Main dialog list | `ImageReceiver.setForUserOrChat` + `setRoundRadius`; `DialogCell.update` fallback | Implemented; source inspected; device pending |
-| Dialog search results using `DialogCell` | Same central hooks + `DialogCell` fallback | Implemented; source inspected; device pending |
-| Search results using `ProfileSearchCell` | Direct `ImageReceiver.setImage(..., parentObject=user/chat, ...)` with parent-class allowlist | Implemented; source inspected; device pending |
-| Sender avatars in private/group messages (`ChatMessageCell`) | Central bind + radius hooks | Implemented; source inspected; device pending |
-| Group member lists and share sheets (`UserCell`, `ShareDialogCell`, `HintDialogCell`) | Central bind + radius hooks | Implemented; source inspected; device pending |
-| Chat header avatar (`ChatAvatarContainer`) | Central bind + radius hooks | Implemented; source inspected; device pending |
-| Bot profile, normal photo (`ProfileActivity$AvatarImageView`) | Direct `setImage` parent allowlist + radius hook | Implemented; source inspected; device pending |
-| Bot profile, normal photo (`ProfileActivity2$AvatarImage`) | Direct `setImage` parent allowlist + radius hook | Implemented; source inspected; device pending |
-| Reply previews / forwarded mini avatars (`AvatarSpan`) | Central `setForUserOrChat` + radius hooks | Implemented; source inspected; device pending |
-| Other widgets using `ImageReceiver.setForUserOrChat` | Central hooks | Implemented; source inspected; device pending |
-| Thin bot outline | `ImageReceiver.draw(Canvas, BackgroundThreadDrawHolder)` after-hook, mark-filtered, adaptive theme color | Implemented; source/mock inspected; device pending |
-| Bot profile vector/video avatar set only through `setImageBitmap` | No TLRPC entity is available at that call site | **Not covered reliably**; documented limitation |
-| Full-screen photo viewer | Intentionally excluded (a photo is not an avatar) | Not covered by design |
-| Notifications and non-UI rendering | No `ImageReceiver` avatar path | Not covered |
-
-## How it works
-
-### 1. Bind hook
-
-```text
-ImageReceiver.setForUserOrChat(TLObject, Drawable, Object, boolean, int, boolean)
-```
-
-The after-hook reads the actual `TLRPC.User`/`TLRPC.Chat` argument. If it is a
-user with `bot == true`, the receiver is marked in its public `mark` field and
-the **full four-corner radius** (including `0,0,0,0` and asymmetric values) is
-stored in a `java.util.WeakHashMap`. The pre-existing `mark` object is saved
-first; it is restored only if the receiver still carries Botile's marker.
-Weak keys mean Botile does not keep dialog cells or image receivers alive.
-
-### 2. Radius hook
-
-```text
-ImageReceiver.setRoundRadius(int[])
-```
-
-A Java-side filter runs Python only when the receiver carries Botile's marker.
-The hook:
-
-- copies the app's requested four-corner radius as the restore baseline;
-- forces all four corners to Botile's radius;
-- lets the original method execute;
-- after the call, reads the receiver's radius back and logs whether the
-  override actually stuck.
-
-Restoration passes the saved `int[4]` back to `setRoundRadius(int[])`, so
-zero and asymmetric corners are not flattened. Marker restoration is guarded:
-a mark set by someone else after Botile is left untouched.
-
-This is what makes Botile survive callers that set the radius *after*
-`setForUserOrChat` (the original `DialogCell.update` does exactly that).
-
-The maximum radius is 11 dp, matching the dialog-list requirement. It is scaled
-down for very small avatars so an 18 dp forwarded/reply mini avatar does not
-turn into a circle:
-
-```text
-radius_px = round(avatar_width_px * 0.22), capped at 11 dp
-```
-
-### 3. Custom images
-
-`ImageReceiver.setImage(...)` and `setImageBitmap(...)` are filtered by the
-same marker. When a non-entity/custom image replaces a bot avatar, Botile
-restores the stored baseline radius and clears the marker. Calls made inside
-`setForUserOrChat` are skipped with a thread-local depth flag, because the
-after-bind hook handles them.
-
-### 4. Direct-image avatars
-
-Profile headers and `ProfileSearchCell` do not use `setForUserOrChat`; they call
-`ImageReceiver.setImage(..., parentObject=user/chat, ...)`. Botile has a
-Java-side filter for `TLRPC.User`/`TLRPC.Chat` at argument 9, then checks the
-receiver's parent class against:
-
-```text
-org.telegram.ui.ProfileActivity$AvatarImageView   (including $1 anonymous subclass)
-org.telegram.ui.ProfileActivity2$AvatarImage
-org.telegram.ui.Cells.ProfileSearchCell
-```
-
-Only those known avatar containers (and subclasses with a `$...` suffix) are
-modified. Unknown bot-parent containers are logged once with their class name
-instead of silently shaping arbitrary images.
-
-### 5. Dialog fallback
-
-`DialogCell.update(int, boolean)` is still hooked after the original. It only
-re-applies the radius when the cell's `avatarImage` carries Botile's marker.
-This is a small fallback for the main dialog list; it no longer depends on
-private `DialogCell` fields.
-
-### 6. Avatar outline (1.1.3)
-
-Botile can add a thin outline to the same marked bot receivers without
-replacing the image, view, or radius path:
-
-```text
-ImageReceiver.draw(Canvas, BackgroundThreadDrawHolder)   (after-hook)
-```
-
-The hook is filtered by Botile's mark, so regular users, groups, and channels
-never enter Python. The outline is skipped when `draw()` returns false, when
-the call is a background-thread draw (non-null holder), or when the receiver's
-alpha is zero. It is drawn **inside** the image bounds, follows the receiver's
-current corner radius, and therefore cannot expand or clip the avatar layout.
-Background-thread composited draws (non-null holder) are skipped so Botile does
-not touch a Canvas off the UI thread.
-
-The color is not hardcoded:
-
-```text
-Theme.getColor(Theme.key_windowBackgroundWhiteBlackText)
-Theme.multAlpha(color, 0.45 * avatarAlpha)
-```
-
-That key is the adaptive high-contrast text color (black in light themes, white
-in dark themes). A 1 dp stroke at 45% alpha is subtle but separates a bot avatar
-from a similar Telegram background. `Paint` and `RectF` are created once and
-reused. If `Paint`, `Theme`, or the draw hook cannot be installed, the plugin
-logs `hook border: ...` / `diag border disabled` and continues with the radius
-behavior; it does not replace the renderer or make the plugin inactive.
-
-The outline uses the global theme color, not a per-chat `ResourcesProvider`
-override. Custom per-chat themes may therefore show a slightly different accent
-than their local UI, while remaining readable in light and dark themes.
-
-### Recycling, accounts, unloading
-
-- `DialogCell` and message-cell rebinding always call `setForUserOrChat` again,
-  which updates the mark/baseline for the new entity.
-- A bot → regular user/group/channel transition restores the stored radius.
-- A regular user → bot transition marks and applies the bot radius.
-- Bot detection uses the entity attached to the receiver, not the selected
-  account.
-- On unload, all hooks are removed and every tracked receiver is restored to
-  its baseline radius on the UI thread.
-
-## Diagnostics and device validation
-
-Botile's logger writes through `self.log` into the exteraless plugin log
-(`PluginLog` / `FileLog`, prefixed `[plugin:botile]`).
-
-### Collect logs
+Python 3.11 and the standard library are sufficient:
 
 ```bash
-adb logcat -c
-# open the main chat list, scroll through bots/users/groups/channels,
-# open a bot chat and a bot profile
-adb logcat -d -v time | grep -i "botile"
+python3 -m py_compile Botile.plugin
+python3 scripts/package_release.py --check
+python3 tests/test_state_preservation.py
+python3 scripts/package_release.py --output-dir dist
+(cd dist && sha256sum -c SHA256SUMS)
 ```
 
-Also check the in-app plugin log: **Settings → Plugins → Botile → log**.
-
-### Expected successful sequence
+The package output is:
 
 ```text
-Botile 1.1.3 starting (installed metadata version=1.1.3)
-diag hooks permission=True
-diag sdk=1.4.5.3
-hook bind: installed ImageReceiver.setForUserOrChat
-hook radius: installed ImageReceiver.setRoundRadius(int[])
-hook image: installed ImageReceiver.setImage core
-hook border: installed ImageReceiver.draw outline
-hook bitmap: installed ... setImageBitmap overload(s)
-hook dialog: installed DialogCell.update fallback
-Botile hooks: bind=OK radius=OK image=OK border=OK dialog=OK
-diag first bind: entity=org.telegram.tgnet.TLRPC$TL_user id=... bot=true parent=...
-diag first bot detected: id=... parent=...
-diag radius verified in receiver ...
-diag first radius override: requested=... parent=... -> ...px
+dist/Botile-1.1.3.plugin
+dist/SHA256SUMS
 ```
 
-Then scrolling should produce periodic summaries such as:
+The plugin metadata is the version source of truth. Releases are tag-triggered:
+an existing `vMAJOR.MINOR.PATCH` tag runs syntax, metadata, and mock checks,
+verifies the tag against `__version__`, packages and checksums the plugin, then
+publishes `Botile-<version>.plugin` and `SHA256SUMS` with generated notes. The
+workflow never creates or moves tags. There is currently no LICENSE file; do
+not redistribute or add a license without the owner's decision.
 
-```text
-diag periodic: binds=500 bots=... nonbots=... overrides=... verified=... clears=...
-```
+## Phone check
 
-### Failure decision tree
+After installing on exteraless:
 
-| Log evidence | Meaning / next step |
-|---|---|
-| No `Botile 1.1.3 starting` line | Plugin is not loaded/enabled, or the installed file is old. Reinstall and check **Plugins → Botile**. |
-| `diag hooks permission=False` | Grant the **hooks** permission, then disable/re-enable Botile. |
-| `diag native_hooks ready=False broken=True` | Exteraless disabled native hooks after a crash. Restart/reinstall the client and clear the plugin engine's native-hook failure state; without Aliuhook Botile cannot work. |
-| `hook bind: FAILED ...` | The inclusive hook runtime rejected/reflection-failed the method. The log includes the exact method and exception. |
-| `binds=0` after scrolling and opening chats | The bind hook is installed but not invoked. Include the full log and the exact exteraless build in a report. |
-| `binds>0`, `bots=0` | The bind hook runs but the entity is not seen as a bot. Include the first-bind entity class/id log. |
-| `bots>0`, `overrides=0` | The radius filter never matched or the radius hook did not run. Check for `HookFilter` errors and the hook registration lines. |
-| `diag radius override did not stick` | The Java method ran but the receiver's radius read back differently. This points to a later overwrite or a build difference. |
-| `hook border: FAILED ...` / `diag border disabled: ...` | The optional outline could not be installed; radius behavior still works. Send the exact line and theme/build details. |
-| `diag direct avatar parent not covered: ...` | A direct-image avatar surface is not in the allowlist. Send the logged class name; it can be added as a targeted hook. |
-| `overrides>0`, `verified>0`, but no visual change | The receiver value is correct but the drawable/clip path is not honoring it on that surface. This must be checked with a device screenshot and the relevant parent class. |
+1. Open the main chat list with a bot, user, group, and channel.
+2. Check that the bot is a rounded square with a thin outline; users, groups,
+   and channels keep their shape and have no Botile outline.
+3. Repeat in light and dark themes, a bot chat, a bot profile, and a forwarded
+   or reply preview. Scroll to force cell recycling.
+4. Collect `adb logcat` and screenshots. Useful lines include
+   `diag hooks permission=True`, `hook bind: installed`,
+   `hook border: installed draw outline`, and `diag first bind: ... bot=True`.
 
-**An Android runtime log is available for 1.1.0:** it confirms hook registration
-failed at method lookup. 1.1.1 was not device-verified and used the same
-class-proxy assumption; 1.1.3 normalizes the proxy before reflection. No runtime
-log for 1.1.3 exists yet. Static analysis and mocks cannot prove pixels on
-screen; mark the visual issue fixed only after the new log shows hooks installed
-and `binds>0`, `bots>0`, `overrides>0`, `verified>0`, with a screenshot showing
-rounded-square bot avatars with the thin outline and circular regular users.
-
-## Verification performed
-
-### Actually performed here
-
-- Python syntax compile — passed (`python3` 3.14 host; source uses syntax
-  compatible with the app's Python 3.11).
-- Metadata parsed with exteraless's actual AST parser:
-  `id=botile`, `name=Botile`, `description=Give bots a distinct avatar shape.`,
-  `version=1.1.3`, `permissions=["hooks"]`, no requirements.
-- Actual exteraless capability scan: only `hooks`, no network/files/message
-  permission markers.
-- `python3 tests/test_state_preservation.py` passed with 16 host-side tests:
-  - runtime class-proxy normalization (`getClass()` → `java.lang.Class`);
-  - exact bind and DialogCell signatures through the runtime proxy;
-  - exact Java method overload selection through `getDeclaredMethods()`;
-  - missing overloads return cleanly;
-  - zero and asymmetric radii restore on recycle and unload;
-  - existing and later external `mark` values are preserved;
-  - the border draws inside the avatar bounds for marked bots, follows the radius, uses the adaptive theme color, and is skipped for unmarked/transparent avatars, failed draws, and background holders.
-- These mocks cover method selection, state restoration, and border draw math.
-  They do not execute Aliuhook callbacks or verify Android rendering.
-
-### Statically verified against source/APK
-
-- Installed APK `12.10.6-00c14f4(1261)`: SDK `1.4.5.3`; target methods, fields,
-  `setForUserOrChat` overloads, core `setImage` signature, and
-  `setRoundRadius(int[])` all exist.
-- Border APIs exist in the exact APK: `ImageReceiver.draw(Canvas,
-  BackgroundThreadDrawHolder)`, `getImageX/Y/Width/Height()`,
-  `getRoundRadius()`, `getAlpha()`, `getCurrentAlpha()`,
-  `Theme.key_windowBackgroundWhiteBlackText`, `Theme.getColor(int)`, and
-  `Theme.multAlpha(int, float)`.
-- GitHub source at `00c14f4` confirms `DialogCell.update` calls
-  `setAvatarCornersApplied(true)` followed by `setRoundRadius(...)`, and the
-  avatar is set through `setForUserOrChat` or direct `setImage` with the entity
-  as `parentObject`.
-- `ProfileActivity$AvatarImageView`, `ProfileActivity2$AvatarImage`,
-  `ProfileSearchCell`, and `AvatarSpan` paths were checked for their parent
-  view/entity arguments.
-- Plugin lifecycle, permission key, `HookFilter` condition/or support, and
-  `.plugin` installation format were checked against the exteraless source.
-
-### Requires a real Android device
-
-Everything visual remains device-pending:
-
-- avatar rendering and actual corner shape;
-- scrolling/recycling smoothness;
-- account switching;
-- enable/disable restoration of visible cells;
-- profile/header/forward surfaces;
-- native Aliuhook initialization.
-
-## Known limitations
-
-- Bot profile **vector/video** avatars set through a direct
-  `setImageBitmap(...)` call have no TLRPC entity at that call site. Normal
-  profile photos are covered; the vector path is not guaranteed.
-- Full-screen photo viewers and notifications are intentionally not avatar
-  targets.
-- Enabling Botile on an already-rendered screen does not force a global list
-  reload. Cells update on their next bind/update. This avoids extra permissions
-  and UI churn; the next normal scroll/bind applies the style.
-- For non-bots, Botile preserves the client's current avatar-corner setting.
-  If that setting already rounds everyone, Botile does not override it.
-- The radius is capped at 11 dp and scaled down for tiny avatars; profile
-  avatars therefore get an 11 dp maximum rather than a large proportional
-  radius.
-- The plugin still requires the `hooks` permission and trusted level. It cannot
-  work in isolated/gated mode.
-- Future client changes are reported by the diagnostic logs rather than
-  silently producing no effect.
-
-## Source references
-
-Verified against:
-
-- installed APK `exteraless-v12.10.6-00c14f4(1261).apk`
-  (`com.exteraless.app`, SDK `1.4.5.3`, Python 3.11);
-- GitHub `exteraless/exteraless` commit
-  [`00c14f4`](https://github.com/exteraless/exteraless/commit/00c14f4)
-  (matching the APK version string);
-- current main commit `8b7ec40` where relevant.
-
-Key files/classes:
-
-| File | What was verified |
-|---|---|
-| `TMessagesProj/src/main/java/org/telegram/messenger/ImageReceiver.java` | `setForUserOrChat(...)`, core 11-arg `setImage(...)`, `setRoundRadius(int[])`, `draw(Canvas, BackgroundThreadDrawHolder)`, `getImageX/Y/Width/Height()`, `getRoundRadius()`, `getAlpha()`, `getCurrentAlpha()`, `setAvatarCornersApplied()`, `setMark/getMark` |
-| `TMessagesProj/src/main/java/org/telegram/ui/ActionBar/Theme.java` | `key_windowBackgroundWhiteBlackText`, `getColor(int)`, `multAlpha(int, float)` used for the adaptive outline |
-| `TMessagesProj/src/main/java/org/telegram/ui/Cells/DialogCell.java` | `avatarImage`, `update(int, boolean)`, radius application via `setRoundRadius` |
-| `TMessagesProj/src/main/java/org/telegram/tgnet/TLRPC.java` | `TLRPC.User.bot` |
-| `TMessagesProj/src/main/java/org/telegram/ui/Cells/ProfileSearchCell.java` | direct `setImage(..., parentObject=user/chat, ...)` and avatar radius |
-| `TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java` | `ProfileActivity$AvatarImageView` direct avatar path |
-| `TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity2.java` | `ProfileActivity2$AvatarImage` direct avatar path |
-| `TMessagesProj/src/main/java/org/telegram/ui/AvatarSpan.java` | forwarded/reply mini avatars use `setForUserOrChat` |
-| `TMessagesProj/src/main/java/app/exteraless/plugins/xposed/HookFilter.java` | Java-side `condition`, `or`, `argument_is_instance_of` filters |
-| `TMessagesProj/src/main/java/app/exteraless/plugins/PluginPermissions.java` | `hooks` permission |
-| `TMessagesProj/src/main/python/base_plugin.py` | `MethodHook`, `HookFilter`, `hook_method`, lifecycle |
-| `TMessagesProj/src/main/python/hook_utils.py` | `find_class` returns the Chaquopy class proxy; `_as_class` normalizes it to `java.lang.Class` before reflection. v1's private-field helper is no longer used |
-
-## Files
-
-- `Botile.plugin` — installable plugin (Python source with metadata), version
-  1.1.3.
-- `README.md` — this English document.
-- `README.ru.md` — Russian documentation.
-- `CHANGELOG.md` — bilingual source/release history.
-- `CONTRIBUTING.md` — bilingual contribution, validation, tag, and release
-  procedure.
-- `SECURITY.md` — bilingual private vulnerability reporting policy.
-- `VALIDATION.md` — bilingual English/Russian phone validation protocol.
-- `.gitignore` — ignores Python caches, `dist/`, virtualenvs, and editor files.
-- `.github/workflows/ci.yml` — read-only PR/main/manual checks.
-- `.github/workflows/release.yml` — tag-triggered validated packaging and
-  GitHub Release publication.
-- `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`,
-  `.github/dependabot.yml` — issue/PR forms and pinned-Action updates.
-- `scripts/package_release.py` — stdlib-only metadata validation and release
-  packaging.
-- `tests/test_state_preservation.py` — host-side radius/mark/outline mocks
-  (zero and asymmetric corners, bot→non-bot, unload, marker preservation).
+Report bugs with the Botile version, exteraless build/SDK, device/Android
+version, relevant log lines, and screenshots. Report security issues privately
+through GitHub Security Advisories rather than a public issue.

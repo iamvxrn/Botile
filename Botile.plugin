@@ -1,17 +1,13 @@
-"""Botile: give bots a distinct avatar shape.
+"""Botile: rounded-square avatars for Telegram bots.
 
-Botile v1 used one DialogCell hook and silently depended on private-field
-reflection. This version hooks the shared avatar path instead:
+Hooks the shared ImageReceiver paths used by exteraless 12.10.6+:
 
-* ImageReceiver.setForUserOrChat() supplies the actual TLRPC entity.
-* ImageReceiver.setRoundRadius(int[]) is the common radius path, so callers
-  that apply a radius after setting the image cannot overwrite Botile.
-* ImageReceiver.setImage()/setImageBitmap() clear bot state when a custom
-  (non-entity) image replaces an avatar.
+* setForUserOrChat() identifies the TLRPC entity and marks bot receivers.
+* setRoundRadius() enforces Botile's radius while preserving the app baseline.
+* setImage()/setImageBitmap() clear bot state for custom images.
+* draw() adds a thin theme-adaptive outline after the bot avatar is painted.
 
-A bot receiver is marked with a string in ImageReceiver.mark, and its original
-radius is kept in a WeakHashMap. Regular users, groups and channels keep the
-radius the app chose.
+Regular users, groups, channels and custom images keep the client's radius.
 """
 
 import threading
@@ -33,11 +29,9 @@ BOT_CORNER_RADIUS_DP = 11
 BOT_BORDER_WIDTH_DP = 1.0
 BOT_BORDER_ALPHA = 0.45
 MARKER = "botile:bot"
-SUMMARY_EVERY = 500
 
-# Direct ImageReceiver avatars that do not go through setForUserOrChat.
-# ProfileActivity/ProfileActivity2 and ProfileSearchCell pass the TLRPC entity
-# as setImage(parentObject, ...) instead.
+# Direct ImageReceiver.setImage() avatar parents. These do not use
+# setForUserOrChat but pass the TLRPC entity as parentObject.
 DIRECT_AVATAR_PARENTS = (
     "org.telegram.ui.ProfileActivity$AvatarImageView",
     "org.telegram.ui.ProfileActivity2$AvatarImage",
@@ -53,15 +47,9 @@ def _is_direct_avatar_parent(name):
             return True
     return False
 
-def _as_java_class(clazz):
-    """Normalize find_class()'s jclass proxy to java.lang.Class.
 
-    find_class() returns the Chaquopy class wrapper, not a Class instance.
-    getDeclaredMethods()/getDeclaredMethod() are instance methods of
-    java.lang.Class and are not exposed on that wrapper. The SDK's own
-    hook_utils._as_class() performs exactly this normalization; keep the
-    fallback for SDK variants where the private helper is absent.
-    """
+def _as_java_class(clazz):
+    """Normalize find_class()'s Chaquopy proxy to java.lang.Class."""
     if clazz is None:
         return None
     try:
@@ -86,23 +74,28 @@ def _as_java_class(clazz):
 
 
 def _find_declared_method(clazz, name, parameter_names):
-    """Find one overload after normalizing the SDK's Java class proxy."""
-    target = _as_java_class(clazz)
-    if target is None:
-        return None
-    expected = tuple(parameter_names)
-    methods = target.getDeclaredMethods()
-    for index in range(len(methods)):
-        method = methods[index]
-        if str(method.getName()) != name:
-            continue
-        parameters = method.getParameterTypes()
-        if len(parameters) != len(expected):
-            continue
-        actual = tuple(str(parameters[i].getName()) for i in range(len(parameters)))
-        if actual == expected:
-            method.setAccessible(True)
-            return method
+    """Find one exact overload after normalizing the class proxy."""
+    try:
+        target = _as_java_class(clazz)
+        if target is None:
+            return None
+        expected = tuple(parameter_names)
+        methods = target.getDeclaredMethods()
+        for index in range(len(methods)):
+            method = methods[index]
+            if str(method.getName()) != name:
+                continue
+            parameters = method.getParameterTypes()
+            if len(parameters) != len(expected):
+                continue
+            actual = tuple(
+                str(parameters[i].getName()) for i in range(len(parameters))
+            )
+            if actual == expected:
+                method.setAccessible(True)
+                return method
+    except Exception:
+        pass
     return None
 
 
@@ -110,14 +103,11 @@ MARK_CONDITION = (
     'thisObject.getMark() != null && '
     'thisObject.getMark().equals("%s")' % MARKER
 )
-# Only UI draws: background-thread draws pass a holder and own a Canvas that
-# must not be touched from the Python callback.
+# Background-thread draws pass a holder and must not be touched from Python.
 BORDER_CONDITION = MARK_CONDITION + ' && args[1] == null'
 
 
-def _entity_is_bot(entity):
-    if entity is None:
-        return False
+def _is_bot(entity):
     try:
         return bool(entity.bot)
     except Exception:
@@ -125,30 +115,24 @@ def _entity_is_bot(entity):
 
 
 class _BindHook(MethodHook):
-    """Track an avatar entity while its receiver is being populated."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
     def before_hooked_method(self, param):
-        # setForUserOrChat is not reentrant. A simple 1/0 flag also recovers
-        # cleanly if a previous call threw before its after-hook ran.
         self._plugin._local.avatar_depth = 1
 
     def after_hooked_method(self, param):
         plugin = self._plugin
         try:
             plugin._local.avatar_depth = 0
-            receiver = param.thisObject
-            entity = param.args[0] if param.args else None
-            plugin._on_avatar_bind(receiver, entity)
+            args = param.args
+            entity = args[0] if args else None
+            plugin._on_bind(param.thisObject, entity)
         except Exception as error:
-            plugin._report_hook_error("bind", error)
+            plugin._report_error("bind", error)
 
 
 class _RadiusHook(MethodHook):
-    """Force the bot radius whenever the app sets a radius on a marked receiver."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
@@ -157,27 +141,15 @@ class _RadiusHook(MethodHook):
         try:
             if getattr(plugin._local, "applying", 0) > 0:
                 return
-            receiver = param.thisObject
-            values = param.args[0] if param.args else None
-            if receiver is None or values is None:
+            args = param.args
+            if args is None or not args:
                 return
-            plugin._override_radius(receiver, values)
+            plugin._override_radius(param.thisObject, args[0])
         except Exception as error:
-            plugin._report_hook_error("radius", error)
-
-    def after_hooked_method(self, param):
-        plugin = self._plugin
-        try:
-            if getattr(plugin._local, "applying", 0) > 0:
-                return
-            plugin._verify_radius(param.thisObject)
-        except Exception as error:
-            plugin._report_hook_error("radius-after", error)
+            plugin._report_error("radius", error)
 
 
 class _ImageHook(MethodHook):
-    """Handle direct entity avatars and clear bot state for custom images."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
@@ -186,19 +158,14 @@ class _ImageHook(MethodHook):
         try:
             if getattr(plugin._local, "avatar_depth", 0) > 0:
                 return
-            receiver = param.thisObject
-            if receiver is None:
-                return
             args = param.args
-            parent_object = args[9] if args is not None and len(args) > 9 else None
-            plugin._on_image_set(receiver, parent_object)
+            parent = args[9] if args is not None and len(args) > 9 else None
+            plugin._on_image(param.thisObject, parent)
         except Exception as error:
-            plugin._report_hook_error("image", error)
+            plugin._report_error("image", error)
 
 
 class _BitmapHook(MethodHook):
-    """Clear bot state when a bitmap replaces a marked avatar."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
@@ -209,31 +176,27 @@ class _BitmapHook(MethodHook):
                 return
             plugin._on_custom_image(param.thisObject)
         except Exception as error:
-            plugin._report_hook_error("bitmap", error)
+            plugin._report_error("bitmap", error)
 
 
 class _BorderDrawHook(MethodHook):
-    """Draw an optional thin outline after a bot avatar has been painted."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
     def after_hooked_method(self, param):
         plugin = self._plugin
         try:
-            if not param.getResult():
-                return
             args = param.args
-            if args is None or len(args) < 2 or args[1] is not None:
+            if not param.getResult() or args is None or len(args) < 2:
                 return
-            plugin._draw_bot_border(args[0], param.thisObject)
+            if args[1] is not None:
+                return
+            plugin._draw_border(args[0], param.thisObject)
         except Exception as error:
-            plugin._report_hook_error("border", error)
+            plugin._report_error("border", error)
 
 
 class _DialogFallbackHook(MethodHook):
-    """Re-apply the radius after DialogCell finishes its own radius update."""
-
     def __init__(self, plugin):
         self._plugin = plugin
 
@@ -241,18 +204,16 @@ class _DialogFallbackHook(MethodHook):
         plugin = self._plugin
         try:
             cell = param.thisObject
-            if cell is None:
-                return
-            receiver = cell.avatarImage
+            receiver = cell.avatarImage if cell is not None else None
             if receiver is None or not plugin._is_marked(receiver):
                 return
-            plugin._force_and_verify(receiver, "dialog")
+            plugin._force_radius(receiver)
             try:
                 cell.invalidate()
             except Exception:
                 pass
         except Exception as error:
-            plugin._report_hook_error("dialog", error)
+            plugin._report_error("dialog", error)
 
 
 class BotilePlugin(BasePlugin):
@@ -269,27 +230,14 @@ class BotilePlugin(BasePlugin):
     _local = None
     _lock = None
 
-    # ---- lifecycle ---------------------------------------------------------
-
     def on_plugin_load(self):
         self._unhooks = []
         self._hooks_ok = {}
-        self._baselines = None
         self._local = threading.local()
         self._lock = threading.RLock()
         self._errors = set()
-        self._firsts = set()
-        self._stats = {
-            "binds": 0,
-            "bots": 0,
-            "nonbots": 0,
-            "overrides": 0,
-            "verified": 0,
-            "clears": 0,
-            "custom": 0,
-            "dialog": 0,
-            "unknown_parent": 0,
-        }
+        self._first_bind_logged = False
+        self._unknown_parent_logged = False
         self._remove_hooks()
 
         self.log(
@@ -311,10 +259,8 @@ class BotilePlugin(BasePlugin):
             self._marks = WeakHashMap()
             self._mark_nulls = WeakHashMap()
         except Exception as error:
-            self.log(
-                "Botile cannot initialise radius/runtime state: %s: %s"
-                % (type(error).__name__, error)
-            )
+            self.log("Botile cannot initialise state: %s: %s"
+                     % (type(error).__name__, error))
             return
 
         self._border_paint = None
@@ -325,17 +271,17 @@ class BotilePlugin(BasePlugin):
             from org.telegram.ui.ActionBar import Theme
 
             self._theme = Theme
-            self._border_stroke = max(1.0, float(AndroidUtilities.dpf2(BOT_BORDER_WIDTH_DP)))
+            self._border_stroke = max(
+                1.0, float(AndroidUtilities.dpf2(BOT_BORDER_WIDTH_DP))
+            )
             self._border_paint = Paint()
             self._border_paint.setAntiAlias(True)
             self._border_paint.setStyle(Paint.Style.STROKE)
             self._border_paint.setStrokeWidth(self._border_stroke)
             self._border_rect = RectF()
         except Exception as error:
-            self.log(
-                "diag border disabled: %s: %s"
-                % (type(error).__name__, error)
-            )
+            self.log("diag border disabled: %s: %s"
+                     % (type(error).__name__, error))
 
         try:
             image_receiver = _as_java_class(
@@ -345,10 +291,7 @@ class BotilePlugin(BasePlugin):
                 find_class("org.telegram.ui.Cells.DialogCell")
             )
             if image_receiver is None:
-                self.log(
-                    "Botile inactive: ImageReceiver class not found or "
-                    "its proxy could not be normalized to java.lang.Class"
-                )
+                self.log("Botile inactive: ImageReceiver class not found")
                 return
 
             mark_filter = HookFilter.Condition(MARK_CONDITION)
@@ -358,140 +301,90 @@ class BotilePlugin(BasePlugin):
                 mark_filter,
             )
 
-            bind_ok = self._install_bind_hook(image_receiver)
-            if not bind_ok:
-                self.log("Botile inactive: central avatar bind hook was not installed")
+            if not self._install_bind_hook(image_receiver):
+                self.log("Botile inactive: bind hook not installed")
                 return
-
             self._install_radius_hook(image_receiver, mark_filter)
             self._install_image_hook(image_receiver, image_filter)
             self._install_border_hook(image_receiver)
             self._install_bitmap_hooks(image_receiver, mark_filter)
             if dialog_cell is not None:
                 self._install_dialog_hook(dialog_cell)
-            else:
-                self.log("Botile note: DialogCell not found; central hooks remain active")
 
-            self.log(
-                "Botile hooks: bind=OK radius=%s image=%s border=%s dialog=%s"
-                % (
-                    self._flag("radius"),
-                    self._flag("image"),
-                    self._flag("border"),
-                    self._flag("dialog"),
-                )
-            )
-            self._log_runtime_state(after_hooks=True)
+            self._log_hook_summary()
         except Exception as error:
-            self.log(
-                "Botile startup failed: %s: %s"
-                % (type(error).__name__, error)
-            )
+            self.log("Botile startup failed: %s: %s"
+                     % (type(error).__name__, error))
 
     def on_plugin_unload(self):
-        self.log(
-            "Botile %s unloading: binds=%d bots=%d nonbots=%d overrides=%d "
-            "verified=%d clears=%d custom=%d dialog=%d unknown_parent=%d"
-            % (
-                __version__,
-                self._stats.get("binds", 0),
-                self._stats.get("bots", 0),
-                self._stats.get("nonbots", 0),
-                self._stats.get("overrides", 0),
-                self._stats.get("verified", 0),
-                self._stats.get("clears", 0),
-                self._stats.get("custom", 0),
-                self._stats.get("dialog", 0),
-                self._stats.get("unknown_parent", 0),
-            )
-        )
+        self.log("Botile %s unloading" % __version__)
         self._remove_hooks()
         self._restore_all()
 
-    # ---- hook installation -------------------------------------------------
+    # ---- hook installation ------------------------------------------------
 
     def _install_bind_hook(self, image_receiver):
-        try:
-            method = _find_declared_method(
-                image_receiver,
-                "setForUserOrChat",
-                (
-                    "org.telegram.tgnet.TLObject",
-                    "android.graphics.drawable.Drawable",
-                    "java.lang.Object",
-                    "boolean",
-                    "int",
-                    "boolean",
-                ),
-            )
-            if method is None:
-                self.log("hook bind: FAILED exact ImageReceiver.setForUserOrChat signature not found")
-                return False
-            unhook = self.hook_method(method, _BindHook(self), priority=50)
-            if unhook is None:
-                self.log("hook bind: FAILED (registrar returned nothing)")
-                return False
-            self._add_unhook(unhook)
-            self._hooks_ok["bind"] = True
-            self.log("hook bind: installed ImageReceiver.setForUserOrChat")
-            return True
-        except Exception as error:
-            self.log(
-                "hook bind: FAILED %s: %s"
-                % (type(error).__name__, error)
-            )
+        method = _find_declared_method(
+            image_receiver,
+            "setForUserOrChat",
+            (
+                "org.telegram.tgnet.TLObject",
+                "android.graphics.drawable.Drawable",
+                "java.lang.Object",
+                "boolean",
+                "int",
+                "boolean",
+            ),
+        )
+        if method is None:
+            self.log("hook bind: FAILED exact signature not found")
             return False
+        if self._hook("bind", method, _BindHook(self)) is None:
+            return False
+        self.log("hook bind: installed setForUserOrChat")
+        return True
 
     def _install_radius_hook(self, image_receiver, mark_filter):
         method = self._find_radius_method(image_receiver)
         if method is None:
-            self.log("hook radius: FAILED ImageReceiver.setRoundRadius(int[]) not found")
+            self.log("hook radius: FAILED setRoundRadius(int[]) not found")
             return
-        unhook = self._hook(label="radius", method=method,
-                            handler=_RadiusHook(self), before_filters=[mark_filter],
-                            after_filters=[mark_filter])
-        if unhook is not None:
-            self.log("hook radius: installed ImageReceiver.setRoundRadius(int[])")
+        if self._hook(
+            "radius", method, _RadiusHook(self),
+            before_filters=[mark_filter],
+        ) is not None:
+            self.log("hook radius: installed setRoundRadius(int[])")
 
     def _install_image_hook(self, image_receiver, image_filter):
-        try:
-            method = _find_declared_method(
-                image_receiver,
-                "setImage",
-                (
-                    "org.telegram.messenger.ImageLocation",
-                    "java.lang.String",
-                    "org.telegram.messenger.ImageLocation",
-                    "java.lang.String",
-                    "org.telegram.messenger.ImageLocation",
-                    "java.lang.String",
-                    "android.graphics.drawable.Drawable",
-                    "long",
-                    "java.lang.String",
-                    "java.lang.Object",
-                    "int",
-                ),
-            )
-            if method is None:
-                self.log("hook image: FAILED exact ImageReceiver.setImage signature not found")
-                return
-            unhook = self._hook(
-                label="image",
-                method=method,
-                handler=_ImageHook(self),
-                before_filters=[image_filter],
-            )
-            if unhook is not None:
-                self.log("hook image: installed ImageReceiver.setImage core")
-        except Exception as error:
-            self.log(
-                "hook image: FAILED %s: %s"
-                % (type(error).__name__, error)
-            )
+        method = _find_declared_method(
+            image_receiver,
+            "setImage",
+            (
+                "org.telegram.messenger.ImageLocation",
+                "java.lang.String",
+                "org.telegram.messenger.ImageLocation",
+                "java.lang.String",
+                "org.telegram.messenger.ImageLocation",
+                "java.lang.String",
+                "android.graphics.drawable.Drawable",
+                "long",
+                "java.lang.String",
+                "java.lang.Object",
+                "int",
+            ),
+        )
+        if method is None:
+            self.log("hook image: FAILED exact signature not found")
+            return
+        if self._hook(
+            "image", method, _ImageHook(self),
+            before_filters=[image_filter],
+        ) is not None:
+            self.log("hook image: installed setImage core")
 
     def _install_border_hook(self, image_receiver):
         if self._border_paint is None:
-            self.log("hook border: skipped (border Paint/RectF unavailable)")
+            self.log("hook border: skipped (Paint/RectF unavailable)")
             return
         method = _find_declared_method(
             image_receiver,
@@ -502,64 +395,41 @@ class BotilePlugin(BasePlugin):
             ),
         )
         if method is None:
-            self.log("hook border: FAILED exact ImageReceiver.draw signature not found")
+            self.log("hook border: FAILED exact signature not found")
             return
-        unhook = self._hook(
-            label="border",
-            method=method,
-            handler=_BorderDrawHook(self),
+        if self._hook(
+            "border", method, _BorderDrawHook(self),
             after_filters=[HookFilter.Condition(BORDER_CONDITION)],
-        )
-        if unhook is not None:
-            self.log("hook border: installed ImageReceiver.draw outline")
+        ) is not None:
+            self.log("hook border: installed draw outline")
 
     def _install_bitmap_hooks(self, image_receiver, mark_filter):
+        found = 0
         try:
             methods = image_receiver.getDeclaredMethods()
-            found = 0
             for index in range(len(methods)):
                 method = methods[index]
                 if str(method.getName()) != "setImageBitmap":
                     continue
                 method.setAccessible(True)
-                unhook = self._hook(
-                    label="bitmap",
-                    method=method,
-                    handler=_BitmapHook(self),
+                if self._hook(
+                    "bitmap", method, _BitmapHook(self),
                     before_filters=[mark_filter],
-                )
-                if unhook is not None:
+                ) is not None:
                     found += 1
-            if found:
-                self.log("hook bitmap: installed %d setImageBitmap overload(s)" % found)
         except Exception as error:
-            self.log(
-                "hook bitmap: FAILED %s: %s"
-                % (type(error).__name__, error)
-            )
+            self.log("hook bitmap: FAILED %s: %s"
+                     % (type(error).__name__, error))
+        if found:
+            self.log("hook bitmap: installed %d setImageBitmap overload(s)" % found)
 
     def _install_dialog_hook(self, dialog_cell):
-        try:
-            method = _find_declared_method(
-                dialog_cell,
-                "update",
-                ("int", "boolean"),
-            )
-            if method is None:
-                self.log("hook dialog: FAILED exact DialogCell.update(int, boolean) signature not found")
-                return
-            unhook = self._hook(
-                label="dialog",
-                method=method,
-                handler=_DialogFallbackHook(self),
-            )
-            if unhook is not None:
-                self.log("hook dialog: installed DialogCell.update fallback")
-        except Exception as error:
-            self.log(
-                "hook dialog: FAILED %s: %s"
-                % (type(error).__name__, error)
-            )
+        method = _find_declared_method(dialog_cell, "update", ("int", "boolean"))
+        if method is None:
+            self.log("hook dialog: FAILED exact signature not found")
+            return
+        if self._hook("dialog", method, _DialogFallbackHook(self)) is not None:
+            self.log("hook dialog: installed update fallback")
 
     def _find_radius_method(self, image_receiver):
         try:
@@ -574,8 +444,8 @@ class BotilePlugin(BasePlugin):
                 if str(params[0].getComponentType().getName()) == "int":
                     method.setAccessible(True)
                     return method
-        except Exception as error:
-            self._report_hook_error("find-radius", error)
+        except Exception:
+            pass
         return None
 
     def _hook(self, label, method, handler, before_filters=None, after_filters=None):
@@ -594,10 +464,8 @@ class BotilePlugin(BasePlugin):
             self._hooks_ok[label] = True
             return unhook
         except Exception as error:
-            self.log(
-                "hook %s: FAILED %s: %s"
-                % (label, type(error).__name__, error)
-            )
+            self.log("hook %s: FAILED %s: %s"
+                     % (label, type(error).__name__, error))
             return None
 
     def _add_unhook(self, unhook):
@@ -617,55 +485,42 @@ class BotilePlugin(BasePlugin):
     def _flag(self, name):
         return "OK" if getattr(self, "_hooks_ok", {}).get(name) else "FAILED"
 
-    # ---- avatar classification / state ------------------------------------
+    def _log_hook_summary(self):
+        self.log(
+            f"Botile hooks: bind=OK radius={self._flag('radius')} "
+            f"image={self._flag('image')} border={self._flag('border')} "
+            f"dialog={self._flag('dialog')}"
+        )
 
-    def _on_avatar_bind(self, receiver, entity):
-        if receiver is None:
-            return
+    # ---- avatar state -----------------------------------------------------
+
+    def _on_bind(self, receiver, entity):
         with self._lock:
-            self._stats["binds"] += 1
-            bot = _entity_is_bot(entity)
-            if bot:
-                self._stats["bots"] += 1
-                self._once(
-                    "bind",
-                    "diag first bind: entity=%s id=%s bot=true parent=%s"
-                    % (self._class_name(entity), self._entity_id(entity),
-                       self._parent_name(receiver)),
+            if receiver is None:
+                return
+            if not self._first_bind_logged:
+                self._first_bind_logged = True
+                self.log(
+                    "diag first bind: id=%s bot=%s parent=%s"
+                    % (self._entity_id(entity), _is_bot(entity),
+                       self._parent_name(receiver))
                 )
-                self._once(
-                    "first-bot",
-                    "diag first bot detected: id=%s parent=%s"
-                    % (self._entity_id(entity), self._parent_name(receiver)),
-                )
-                self._apply_bot(receiver, "bind")
+            if _is_bot(entity):
+                self._apply_bot(receiver)
             else:
-                self._stats["nonbots"] += 1
-                self._once(
-                    "bind",
-                    "diag first bind: entity=%s id=%s bot=false parent=%s"
-                    % (self._class_name(entity), self._entity_id(entity),
-                       self._parent_name(receiver)),
-                )
-                self._clear_bot(receiver, "bind")
-            if self._stats["binds"] % SUMMARY_EVERY == 0:
-                self._summary("periodic")
+                self._clear_bot(receiver)
 
-    def _on_image_set(self, receiver, parent_object):
+    def _on_image(self, receiver, parent_object):
         with self._lock:
-            if _entity_is_bot(parent_object):
+            if _is_bot(parent_object):
                 parent = self._parent_name(receiver)
                 if _is_direct_avatar_parent(parent):
-                    self._once(
-                        "direct",
-                        "diag direct avatar path: bot id=%s parent=%s"
-                        % (self._entity_id(parent_object), parent),
-                    )
-                    self._apply_bot(receiver, "direct")
-                else:
-                    self._note_unknown_parent(parent, parent_object)
+                    self._apply_bot(receiver)
+                elif not self._unknown_parent_logged:
+                    self._unknown_parent_logged = True
+                    self.log("diag direct avatar parent not covered: %s" % parent)
                 return
-            self._clear_bot(receiver, "image")
+            self._clear_bot(receiver)
 
     def _on_custom_image(self, receiver):
         with self._lock:
@@ -673,15 +528,9 @@ class BotilePlugin(BasePlugin):
                 return
             if not self._is_marked(receiver) and self._baseline_array(receiver) is None:
                 return
-            self._stats["custom"] += 1
-            self._once(
-                "custom",
-                "diag first custom image on marked receiver: parent=%s"
-                % self._parent_name(receiver),
-            )
-            self._clear_bot(receiver, "custom")
+            self._clear_bot(receiver)
 
-    def _apply_bot(self, receiver, source):
+    def _apply_bot(self, receiver):
         with self._lock:
             if receiver is None:
                 return
@@ -698,35 +547,13 @@ class BotilePlugin(BasePlugin):
             applied = self._bot_radius(receiver, size_hint)
             self._applied.put(receiver, int(applied))
             self._save_mark(receiver)
-            if not self._set_mark(receiver, MARKER):
-                self._once(
-                    "mark-set-failed",
-                    "diag could not set ImageReceiver.mark; radius may be overwritten",
-                )
-            self._enter_apply()
-            try:
-                try:
-                    receiver.setAvatarCornersApplied(True)
-                except Exception:
-                    pass
-                receiver.setRoundRadius(applied)
-                try:
-                    receiver.invalidate()
-                except Exception:
-                    pass
-                actual = self._corners_of(receiver)
-                if self._corners_are(actual, applied):
-                    self._stats["verified"] += 1
-                    self._once(
-                        "verified-bind",
-                        "diag radius verified in receiver after %s: %spx (max %ddp)"
-                        % (source, applied, BOT_CORNER_RADIUS_DP),
-                    )
-            finally:
-                self._exit_apply()
+            self._set_mark(receiver, MARKER)
+            self._apply_radius(receiver, applied)
 
     def _override_radius(self, receiver, values):
         with self._lock:
+            if receiver is None or values is None:
+                return
             baseline_array = self._baseline_array(receiver)
             if baseline_array is None and not self._is_marked(receiver):
                 return
@@ -736,80 +563,111 @@ class BotilePlugin(BasePlugin):
             requested = self._array_values(requested_array)
             applied = self._bot_radius(receiver, self._max_corner(requested))
             self._applied.put(receiver, int(applied))
-            self._enter_apply()
             try:
-                try:
-                    receiver.setAvatarCornersApplied(True)
-                except Exception:
-                    pass
-                for index in range(min(4, len(values))):
-                    values[index] = applied
-                self._stats["overrides"] += 1
-                self._once(
-                    "override",
-                    "diag first radius override: requested=%s parent=%s -> %spx"
-                    % (requested, self._parent_name(receiver), applied),
-                )
-            finally:
-                self._exit_apply()
+                receiver.setAvatarCornersApplied(True)
+            except Exception:
+                pass
+            for index in range(min(4, len(values))):
+                values[index] = applied
 
-    def _verify_radius(self, receiver):
+    def _force_radius(self, receiver):
         with self._lock:
-            if receiver is None or not self._is_marked(receiver):
+            if receiver is None:
                 return
-            expected = self._applied_radius(receiver)
-            actual = self._corners_of(receiver)
-            if self._corners_are(actual, expected):
-                self._stats["verified"] += 1
-                self._once(
-                    "verified-hook",
-                    "diag radius verified in receiver after hook: %spx" % expected,
-                )
-            else:
-                self._once(
-                    "not-stuck",
-                    "diag radius override did not stick: actual=%s expected=%s parent=%s"
-                    % (actual, expected, self._parent_name(receiver)),
-                )
+            self._apply_radius(receiver, self._applied_radius(receiver), False)
 
-    def _force_and_verify(self, receiver, source):
-        with self._lock:
-            applied = self._applied_radius(receiver)
-            self._enter_apply()
+    def _apply_radius(self, receiver, value, invalidate=True):
+        self._enter_apply()
+        try:
             try:
+                receiver.setAvatarCornersApplied(True)
+            except Exception:
+                pass
+            receiver.setRoundRadius(value)
+            if invalidate:
                 try:
-                    receiver.setAvatarCornersApplied(True)
+                    receiver.invalidate()
                 except Exception:
                     pass
-                receiver.setRoundRadius(applied)
-                self._stats["dialog"] += 1
-                actual = self._corners_of(receiver)
-                if self._corners_are(actual, applied):
-                    self._stats["verified"] += 1
-                    self._once(
-                        "verified-dialog",
-                        "diag radius verified after %s fallback: %spx" % (source, applied),
-                    )
-                else:
-                    self._once(
-                        "dialog-not-stuck",
-                        "diag dialog fallback did not stick: actual=%s expected=%s"
-                        % (actual, applied),
-                    )
-            finally:
-                self._exit_apply()
+        finally:
+            self._exit_apply()
 
-    def _draw_bot_border(self, canvas, receiver):
-        """Draw a thin theme-adaptive inset outline around a bot avatar."""
+    def _clear_bot(self, receiver):
+        with self._lock:
+            if receiver is None:
+                return
+            marked = self._is_marked(receiver)
+            baseline_array = self._baseline_array(receiver)
+            if not marked and baseline_array is None:
+                return
+            current = self._corners_of(receiver)
+            applied = self._applied_radius(receiver)
+            restore = baseline_array is not None
+            if current is not None and not self._corners_are(current, applied):
+                # The app already applied a new radius; it is authoritative.
+                restore = False
+            if restore:
+                self._apply_radius(receiver, baseline_array)
+            self._restore_mark(receiver)
+            for mapping in (self._baselines, self._applied):
+                try:
+                    mapping.remove(receiver)
+                except Exception:
+                    pass
+
+    def _restore_all(self):
+        baselines = self._baselines
+        applied = self._applied
+        marks = self._marks
+        mark_nulls = self._mark_nulls
+        self._baselines = None
+        if baselines is None and marks is None and mark_nulls is None:
+            return
+
+        def restore():
+            with self._lock:
+                keys = []
+                for mapping in (baselines, marks, mark_nulls):
+                    if mapping is not None:
+                        try:
+                            keys.extend(list(mapping.keySet()))
+                        except Exception:
+                            pass
+                for receiver in keys:
+                    try:
+                        baseline = (
+                            baselines.get(receiver) if baselines is not None else None
+                        )
+                        if baseline is not None:
+                            self._apply_radius(receiver, baseline)
+                        self._restore_mark(receiver, marks, mark_nulls)
+                    except Exception:
+                        pass
+                for mapping in (baselines, marks, mark_nulls, applied):
+                    if mapping is not None:
+                        try:
+                            mapping.clear()
+                        except Exception:
+                            pass
+
+        try:
+            from android_utils import run_on_ui_thread
+
+            run_on_ui_thread(restore)
+        except Exception:
+            pass
+
+    # ---- border -----------------------------------------------------------
+
+    def _draw_border(self, canvas, receiver):
         if (
             canvas is None
             or receiver is None
             or self._border_paint is None
             or self._border_rect is None
             or self._theme is None
+            or not self._is_marked(receiver)
         ):
-            return
-        if not self._is_marked(receiver):
             return
         try:
             width = float(receiver.getImageWidth())
@@ -826,15 +684,13 @@ class BotilePlugin(BasePlugin):
         if alpha <= 0.01:
             return
         stroke = self._border_stroke
-        inset = stroke * 0.5
         if width <= stroke or height <= stroke:
             return
+        inset = stroke * 0.5
         rect = self._border_rect
         x = float(receiver.getImageX())
         y = float(receiver.getImageY())
         rect.set(x + inset, y + inset, x + width - inset, y + height - inset)
-        if rect.width() <= 0 or rect.height() <= 0:
-            return
         radius = 0.0
         try:
             radii = receiver.getRoundRadius()
@@ -843,7 +699,6 @@ class BotilePlugin(BasePlugin):
         except Exception:
             pass
         radius = max(0.0, min(radius, min(rect.width(), rect.height()) * 0.5))
-        # Adaptive high-contrast text color: no hardcoded RGB, follows light/dark.
         color = self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
         self._border_paint.setColor(
             self._theme.multAlpha(color, BOT_BORDER_ALPHA * alpha)
@@ -851,110 +706,7 @@ class BotilePlugin(BasePlugin):
         self._border_paint.setStrokeWidth(stroke)
         canvas.drawRoundRect(rect, radius, radius, self._border_paint)
 
-    def _clear_bot(self, receiver, source):
-        with self._lock:
-            if receiver is None:
-                return
-            marked = self._is_marked(receiver)
-            baseline_array = self._baseline_array(receiver)
-            if not marked and baseline_array is None:
-                return
-            current = self._corners_of(receiver)
-            applied = self._applied_radius(receiver)
-            restore = baseline_array is not None
-            if current is not None and not self._corners_are(current, applied):
-                # The app already applied a new radius; it is authoritative.
-                restore = False
-            self._enter_apply()
-            try:
-                if restore:
-                    try:
-                        receiver.setAvatarCornersApplied(True)
-                    except Exception:
-                        pass
-                    receiver.setRoundRadius(baseline_array)
-                    try:
-                        receiver.invalidate()
-                    except Exception:
-                        pass
-            finally:
-                self._exit_apply()
-            self._restore_mark(receiver)
-            try:
-                self._baselines.remove(receiver)
-            except Exception:
-                pass
-            try:
-                self._applied.remove(receiver)
-            except Exception:
-                pass
-            self._stats["clears"] += 1
-            self._once(
-                "clear",
-                "diag first bot state cleared: source=%s parent=%s restored=%s"
-                % (source, self._parent_name(receiver), restore),
-            )
-
-    def _restore_all(self):
-        baselines = self._baselines
-        applied = self._applied
-        marks = self._marks
-        mark_nulls = self._mark_nulls
-        self._baselines = None
-        if baselines is None and marks is None and mark_nulls is None:
-            return
-
-        def restore():
-            with self._lock:
-                keys = []
-                for mapping in (baselines, marks, mark_nulls):
-                    if mapping is None:
-                        continue
-                    try:
-                        keys.extend(list(mapping.keySet()))
-                    except Exception:
-                        pass
-                for receiver in keys:
-                    try:
-                        baseline_array = baselines.get(receiver) if baselines is not None else None
-                        self._enter_apply()
-                        try:
-                            if baseline_array is not None:
-                                try:
-                                    receiver.setAvatarCornersApplied(True)
-                                except Exception:
-                                    pass
-                                receiver.setRoundRadius(baseline_array)
-                                try:
-                                    receiver.invalidate()
-                                except Exception:
-                                    pass
-                        finally:
-                            self._exit_apply()
-                        self._restore_mark(receiver, marks, mark_nulls)
-                    except Exception:
-                        pass
-                for mapping in (baselines, marks, mark_nulls):
-                    if mapping is not None:
-                        try:
-                            mapping.clear()
-                        except Exception:
-                            pass
-                try:
-                    if applied is not None:
-                        applied.clear()
-                except Exception:
-                    pass
-                self._summary("unload")
-
-        try:
-            from android_utils import run_on_ui_thread
-
-            run_on_ui_thread(restore)
-        except Exception:
-            pass
-
-    # ---- diagnostic helpers ------------------------------------------------
+    # ---- helpers ----------------------------------------------------------
 
     def _has_hooks_permission(self):
         try:
@@ -963,111 +715,28 @@ class BotilePlugin(BasePlugin):
             allowed = bool(PythonBridge.hasPermission(self.id, "hooks"))
             self.log("diag hooks permission=%s" % allowed)
             if not allowed:
-                self.log(
-                    "Botile inactive: the 'hooks' permission is not granted. "
-                    "Grant it on the plugin permissions screen, then enable Botile again."
-                )
+                self.log("Botile inactive: grant the hooks permission")
             return allowed
         except Exception as error:
-            self.log(
-                "diag hooks permission query failed (%s: %s); trying anyway"
-                % (type(error).__name__, error)
-            )
+            self.log("diag hooks permission query failed: %s" % error)
             return True
 
-    def _log_runtime_state(self, after_hooks=False):
-        try:
-            from app.exteraless.plugins import PythonBridge
-
-            self.log("diag sdk=%s" % PythonBridge.getSdkVersion())
-        except Exception as error:
-            self.log("diag sdk query failed: %s" % error)
-        try:
-            xposed = find_class("app.exteraless.plugins.xposed.XposedHooks")
-            if xposed is not None:
-                self.log(
-                    "diag native_hooks ready=%s broken=%s"
-                    % (xposed.isReady(), xposed.isNativeHooksBroken())
-                )
-        except Exception as error:
-            self.log("diag native hooks query failed: %s" % error)
-        if after_hooks:
-            self.log(
-                "diag hooks_ok bind=%s radius=%s image=%s border=%s bitmap=%s dialog=%s"
-                % (
-                    self._flag("bind"),
-                    self._flag("radius"),
-                    self._flag("image"),
-                    self._flag("border"),
-                    self._flag("bitmap"),
-                    self._flag("dialog"),
-                )
-            )
-
-    def _summary(self, where):
-        self.log(
-            "diag %s: binds=%d bots=%d nonbots=%d overrides=%d verified=%d "
-            "clears=%d custom=%d dialog=%d unknown_parent=%d"
-            % (
-                where,
-                self._stats.get("binds", 0),
-                self._stats.get("bots", 0),
-                self._stats.get("nonbots", 0),
-                self._stats.get("overrides", 0),
-                self._stats.get("verified", 0),
-                self._stats.get("clears", 0),
-                self._stats.get("custom", 0),
-                self._stats.get("dialog", 0),
-                self._stats.get("unknown_parent", 0),
-            )
-        )
-
-    def _once(self, key, message):
-        if key in self._firsts:
-            return
-        if len(self._firsts) >= 12:
-            return
-        self._firsts.add(key)
-        self.log(message)
-
-    def _note_unknown_parent(self, parent, entity):
-        self._stats["unknown_parent"] += 1
-        key = "unknown:" + str(parent)
-        if key in self._firsts:
-            return
-        if len(self._firsts) >= 12:
-            return
-        self._firsts.add(key)
-        self.log(
-            "diag direct avatar parent not covered: %s (bot id=%s); "
-            "report this class name for a targeted hook"
-            % (parent, self._entity_id(entity))
-        )
-
-    def _report_hook_error(self, where, error):
-        key = "%s:%s:%s" % (where, type(error).__name__, str(error)[:100])
-        if key in self._errors:
-            return
-        if len(self._errors) >= 6:
+    def _report_error(self, where, error):
+        key = (where, type(error).__name__, str(error)[:100])
+        if key in self._errors or len(self._errors) >= 6:
             return
         self._errors.add(key)
-        self.log(
-            "diag hook error [%s]: %s: %s"
-            % (where, type(error).__name__, error)
-        )
+        self.log("diag hook error [%s]: %s: %s"
+                 % (where, type(error).__name__, error))
 
     def _enter_apply(self):
-        local = self._local
-        local.applying = getattr(local, "applying", 0) + 1
+        self._local.applying = getattr(self._local, "applying", 0) + 1
 
     def _exit_apply(self):
         local = self._local
         local.applying = max(0, getattr(local, "applying", 1) - 1)
 
-    # ---- receiver state helpers -------------------------------------------
-
     def _bot_radius(self, receiver, size_hint=None):
-        """11 dp maximum, scaled down so tiny avatars do not become circles."""
         try:
             width = receiver.getImageWidth()
         except Exception:
@@ -1077,8 +746,7 @@ class BotilePlugin(BasePlugin):
             size_px = int(size_hint) * 2
         if size_px <= 0:
             return self._radius_px
-        radius = int(round(size_px * 0.22))
-        return max(1, min(self._radius_px, radius))
+        return max(1, min(self._radius_px, int(round(size_px * 0.22))))
 
     def _applied_radius(self, receiver):
         try:
@@ -1096,29 +764,21 @@ class BotilePlugin(BasePlugin):
             return None
 
     def _copy_corners(self, values):
-        """Copy a four-corner radius, preserving zeros and asymmetry."""
         if values is None:
             return None
         try:
             return self._arrays.copyOf(values, 4)
         except Exception:
             try:
-                result = [0, 0, 0, 0]
-                for index in range(min(4, len(values))):
-                    result[index] = int(values[index])
-                return result
-            except Exception as error:
-                self._report_hook_error("copy-corners", error)
+                return [int(values[i]) if i < len(values) else 0 for i in range(4)]
+            except Exception:
                 return None
 
     def _array_values(self, values):
         if values is None:
             return None
         try:
-            result = [0, 0, 0, 0]
-            for index in range(min(4, len(values))):
-                result[index] = int(values[index])
-            return tuple(result)
+            return tuple(int(values[i]) if i < len(values) else 0 for i in range(4))
         except Exception:
             return None
 
@@ -1129,9 +789,7 @@ class BotilePlugin(BasePlugin):
             return None
 
     def _max_corner(self, values):
-        if not values:
-            return 0
-        return max(0, max(values))
+        return max(0, max(values)) if values else 0
 
     def _corners_are(self, values, applied):
         return values is not None and all(int(value) == applied for value in values)
@@ -1146,33 +804,27 @@ class BotilePlugin(BasePlugin):
     def _set_mark(self, receiver, value):
         try:
             receiver.setMark(value)
-            return True
         except Exception:
-            return False
+            pass
 
     def _save_mark(self, receiver):
-        """Remember the pre-Botile marker, including an explicit null."""
         try:
             current = receiver.getMark()
             if current is not None and str(current) == MARKER:
                 return
-            try:
-                self._marks.remove(receiver)
-            except Exception:
-                pass
-            try:
-                self._mark_nulls.remove(receiver)
-            except Exception:
-                pass
+            for mapping in (self._marks, self._mark_nulls):
+                try:
+                    mapping.remove(receiver)
+                except Exception:
+                    pass
             if current is None:
                 self._mark_nulls.put(receiver, True)
             else:
                 self._marks.put(receiver, current)
         except Exception as error:
-            self._report_hook_error("mark-save", error)
+            self._report_error("mark-save", error)
 
     def _restore_mark(self, receiver, marks=None, mark_nulls=None):
-        """Restore the saved marker only while Botile's marker is still there."""
         if marks is None:
             marks = self._marks
         if mark_nulls is None:
@@ -1192,7 +844,6 @@ class BotilePlugin(BasePlugin):
                 pass
             if current_is_botile:
                 self._set_mark(receiver, original if saved else None)
-            # A later external mark (or an explicitly cleared mark) is left alone.
         finally:
             for mapping in (marks, mark_nulls):
                 try:
@@ -1203,23 +854,11 @@ class BotilePlugin(BasePlugin):
     def _parent_name(self, receiver):
         try:
             parent = receiver.getParentView()
-            if parent is None:
-                return "none"
-            return str(parent.getClass().getName())
+            return "none" if parent is None else str(parent.getClass().getName())
         except Exception:
             return "?"
-
-    def _class_name(self, entity):
-        if entity is None:
-            return "null"
-        try:
-            return str(entity.getClass().getName())
-        except Exception:
-            return type(entity).__name__
 
     def _entity_id(self, entity):
-        if entity is None:
-            return "?"
         try:
             return str(entity.id)
         except Exception:
