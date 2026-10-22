@@ -34,11 +34,12 @@ FRAME_COLOR_THEME = 0
 FRAME_COLOR_ACCENT = 1
 FRAME_COLOR_WHITE = 2
 FRAME_COLOR_BLACK = 3
-FRAME_COLOR_ITEMS = (
-    "Theme / Тема",
-    "Accent / Акцент",
-    "White / Белая",
-    "Black / Чёрная",
+# (English, Russian) labels; indexes are persisted setting values.
+FRAME_COLOR_LABELS = (
+    ("Theme", "Тема"),
+    ("Accent", "Акцент"),
+    ("White", "Белая"),
+    ("Black", "Чёрная"),
 )
 MARKER = "botile:bot"
 
@@ -228,6 +229,185 @@ class _DialogFallbackHook(MethodHook):
             plugin._report_error("dialog", error)
 
 
+class _FrameSettingsViewFactory:
+    """Compact frame palette + continuous slider using app-native widgets."""
+
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.view = None
+        self.swatches = []
+        self.slider = None
+        self.value_label = None
+        self.selected = FRAME_COLOR_THEME
+
+    def create_view(self, context):
+        from android.graphics.drawable import GradientDrawable
+        from android.util import TypedValue
+        from android.view import Gravity, View
+        from android.widget import LinearLayout, TextView
+        from java import dynamic_proxy
+        from org.telegram.messenger import AndroidUtilities
+        from org.telegram.ui.ActionBar import Theme
+        from org.telegram.ui.Components import SeekBarView
+
+        dp = AndroidUtilities.dp
+
+        class SwatchClickListener(dynamic_proxy(View.OnClickListener)):
+            def __init__(self, owner, index):
+                super().__init__()
+                self.owner = owner
+                self.index = index
+
+            def onClick(self, view):
+                self.owner._select(self.index)
+
+        class SliderDelegate(
+            dynamic_proxy(SeekBarView.SeekBarViewDelegate)
+        ):
+            def __init__(self, owner):
+                super().__init__()
+                self.owner = owner
+
+            def onSeekBarDrag(self, stop, progress):
+                self.owner._on_slider(stop, progress)
+
+            def onSeekBarPressed(self, pressed):
+                pass
+
+            def getContentDescription(self):
+                return self.owner.plugin._text(
+                    "Frame thickness", "Толщина рамки"
+                )
+
+            def getStepsCount(self):
+                return 0
+
+            def needVisuallyDivideSteps(self):
+                return False
+
+        root = LinearLayout(context)
+        root.setOrientation(LinearLayout.VERTICAL)
+        root.setPadding(dp(21), dp(6), dp(21), dp(6))
+        self.view = root
+        self.swatches = []
+        self.selected = FRAME_COLOR_THEME
+
+        color_row = LinearLayout(context)
+        color_row.setOrientation(LinearLayout.HORIZONTAL)
+        color_row.setGravity(Gravity.CENTER_VERTICAL)
+        color_title = TextView(context)
+        color_title.setText(self.plugin._text("Frame color", "Цвет рамки"))
+        color_title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
+        color_title.setTextColor(
+            Theme.getColor(Theme.key_windowBackgroundWhiteBlackText)
+        )
+        color_row.addView(
+            color_title, LinearLayout.LayoutParams(0, -2, 1.0)
+        )
+
+        swatch_row = LinearLayout(context)
+        swatch_row.setOrientation(LinearLayout.HORIZONTAL)
+        swatch_row.setGravity(Gravity.CENTER_VERTICAL)
+        for index in range(len(FRAME_COLOR_LABELS)):
+            swatch = View(context)
+            params = LinearLayout.LayoutParams(dp(30), dp(30))
+            params.leftMargin = dp(8)
+            swatch.setLayoutParams(params)
+            swatch.setBackground(self._swatch_drawable(index, False))
+            swatch.setContentDescription(self.plugin._frame_color_label(index))
+            swatch.setOnClickListener(SwatchClickListener(self, index))
+            swatch_row.addView(swatch)
+            self.swatches.append(swatch)
+        color_row.addView(swatch_row, LinearLayout.LayoutParams(-2, -2))
+        root.addView(color_row, LinearLayout.LayoutParams(-1, -2))
+
+        title_row = LinearLayout(context)
+        title_row.setOrientation(LinearLayout.HORIZONTAL)
+        title_row.setGravity(Gravity.CENTER_VERTICAL)
+        title_row.setPadding(0, dp(4), 0, 0)
+        title = TextView(context)
+        title.setText(
+            self.plugin._text("Frame thickness", "Толщина рамки")
+        )
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
+        title.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
+        self.value_label = TextView(context)
+        self.value_label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16)
+        self.value_label.setTextColor(
+            Theme.getColor(Theme.key_windowBackgroundWhiteBlueHeader)
+        )
+        self.value_label.setGravity(Gravity.RIGHT)
+        title_row.addView(title, LinearLayout.LayoutParams(0, -2, 1.0))
+        title_row.addView(self.value_label, LinearLayout.LayoutParams(-2, -2))
+        root.addView(title_row, LinearLayout.LayoutParams(-1, -2))
+
+        self.slider = SeekBarView(context)
+        self.slider.setReportChanges(True)
+        self.slider.setDelegate(SliderDelegate(self))
+        root.addView(self.slider, LinearLayout.LayoutParams(-1, dp(32)))
+        return root
+
+    def bind_view(self, view, item=None, divider=False):
+        _enabled, color, thickness = self.plugin._frame_config()
+        self.selected = color
+        self._refresh_swatches()
+        if self.slider is not None:
+            progress = (
+                (thickness - BOT_BORDER_MIN_DP)
+                / (BOT_BORDER_MAX_DP - BOT_BORDER_MIN_DP)
+            )
+            self.slider.setProgress(max(0.0, min(1.0, progress)))
+        self._update_value(thickness)
+
+    def _select(self, index):
+        self.selected = int(index)
+        self.plugin.set_setting("frame_color", self.selected)
+        self._refresh_swatches()
+
+    def _refresh_swatches(self):
+        for index, swatch in enumerate(self.swatches):
+            swatch.setBackground(
+                self._swatch_drawable(index, index == self.selected)
+            )
+
+    def _update_value(self, value):
+        if self.value_label is not None:
+            self.value_label.setText("%.1f dp" % float(value))
+
+    def _on_slider(self, stop, progress):
+        progress = max(0.0, min(1.0, float(progress)))
+        value = (
+            BOT_BORDER_MIN_DP
+            + progress * (BOT_BORDER_MAX_DP - BOT_BORDER_MIN_DP)
+        )
+        self._update_value(value)
+        if stop:
+            self.plugin.set_setting("frame_thickness", round(value, 2))
+
+    def _swatch_drawable(self, index, selected):
+        from android.graphics.drawable import GradientDrawable
+        from org.telegram.messenger import AndroidUtilities
+        from org.telegram.ui.ActionBar import Theme
+
+        drawable = GradientDrawable()
+        drawable.setShape(GradientDrawable.OVAL)
+        drawable.setColor(self.plugin._frame_color(index))
+        if selected:
+            stroke = AndroidUtilities.dp(2)
+            color = (
+                Theme.getColor(Theme.key_windowBackgroundWhiteBlackText)
+                if index == FRAME_COLOR_ACCENT
+                else Theme.getColor(Theme.key_chat_messagePanelSend)
+            )
+        else:
+            stroke = AndroidUtilities.dp(1)
+            color = Theme.multAlpha(
+                Theme.getColor(Theme.key_windowBackgroundWhiteBlackText), 0.30
+            )
+        drawable.setStroke(stroke, color)
+        return drawable
+
+
 class BotilePlugin(BasePlugin):
     _unhooks = None
     _baselines = None
@@ -242,32 +422,45 @@ class BotilePlugin(BasePlugin):
     _local = None
     _lock = None
 
-    def create_settings(self):
-        from ui.settings import Header, Selector, Slider, Switch
+    def _app_language(self):
+        try:
+            from org.telegram.messenger import LocaleController
 
+            code = str(LocaleController.getLocaleStringIso639() or "en").lower()
+        except Exception:
+            code = "en"
+        return "ru" if code.split("-")[0].split("_")[0] == "ru" else "en"
+
+    def _text(self, english, russian):
+        return russian if self._app_language() == "ru" else english
+
+    def _frame_color_label(self, index):
+        labels = FRAME_COLOR_LABELS[
+            max(0, min(len(FRAME_COLOR_LABELS) - 1, int(index)))
+        ]
+        return labels[1] if self._app_language() == "ru" else labels[0]
+
+    def create_settings(self):
+        from ui.settings import Custom, Header, SimpleSettingFactory, Switch
+
+        helper = _FrameSettingsViewFactory(self)
+        factory = SimpleSettingFactory(
+            create_view=helper.create_view,
+            bind_view=helper.bind_view,
+        )
         return [
-            Header("Bot avatar frame / Рамка аватара"),
+            Header(self._text("Bot avatar frame", "Рамка аватара")),
             Switch(
                 key="frame_enabled",
-                text="Show frame / Показывать рамку",
+                text=self._text("Show frame", "Показывать рамку"),
                 default=True,
-                subtext="Bot avatars only / Только для ботов",
+                subtext=self._text(
+                    "Bot avatars only", "Только для аватаров ботов"
+                ),
             ),
-            Selector(
-                key="frame_color",
-                text="Frame color / Цвет рамки",
-                default=FRAME_COLOR_THEME,
-                items=list(FRAME_COLOR_ITEMS),
-                subtext="Theme follows light/dark / Тема следует оформлению",
-            ),
-            Slider(
-                key="frame_thickness",
-                text="Frame thickness / Толщина рамки",
-                default=BOT_BORDER_WIDTH_DP,
-                min=BOT_BORDER_MIN_DP,
-                max=BOT_BORDER_MAX_DP,
-                step=0.5,
-                subtext="0.5–3.0 dp / 0.5–3.0 dp",
+            Custom(
+                factory=factory,
+                on_click=lambda view=None: None,
             ),
         ]
 
@@ -711,7 +904,7 @@ class BotilePlugin(BasePlugin):
             color = int(self.get_setting("frame_color", FRAME_COLOR_THEME))
         except Exception:
             color = FRAME_COLOR_THEME
-        color = max(0, min(len(FRAME_COLOR_ITEMS) - 1, color))
+        color = max(0, min(len(FRAME_COLOR_LABELS) - 1, color))
 
         try:
             thickness = float(
@@ -723,12 +916,14 @@ class BotilePlugin(BasePlugin):
         return enabled, color, thickness
 
     def _frame_color(self, index):
-        if index == FRAME_COLOR_ACCENT:
-            return self._theme.getColor(self._theme.key_chat_messagePanelSend)
         if index == FRAME_COLOR_WHITE:
             return 0xFFFFFFFF
         if index == FRAME_COLOR_BLACK:
             return 0xFF000000
+        if self._theme is None:
+            return 0xFF808080
+        if index == FRAME_COLOR_ACCENT:
+            return self._theme.getColor(self._theme.key_chat_messagePanelSend)
         return self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
 
     def _draw_border(self, canvas, receiver):

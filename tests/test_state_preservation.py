@@ -38,6 +38,9 @@ class BasePlugin:
     def get_setting(self, key, default=None):
         return getattr(self, "settings", {}).get(key, default)
 
+    def set_setting(self, key, value, reload_settings=False):
+        self.settings[key] = value
+
 
 base_plugin = types.ModuleType("base_plugin")
 base_plugin.BasePlugin = BasePlugin
@@ -362,6 +365,68 @@ def test_frame_settings_control_border():
     assert len(canvas.calls) == 1
 
 
+def test_app_language_reads_client_locale_controller():
+    org = types.ModuleType("org")
+    telegram = types.ModuleType("org.telegram")
+    messenger = types.ModuleType("org.telegram.messenger")
+
+    class LocaleController:
+        @staticmethod
+        def getLocaleStringIso639():
+            return "ru-RU"
+
+    messenger.LocaleController = LocaleController
+    org.telegram = telegram
+    telegram.messenger = messenger
+    old_org = sys.modules.get("org")
+    old_telegram = sys.modules.get("org.telegram")
+    old_messenger = sys.modules.get("org.telegram.messenger")
+    sys.modules["org"] = org
+    sys.modules["org.telegram"] = telegram
+    sys.modules["org.telegram.messenger"] = messenger
+    try:
+        assert make_plugin()._app_language() == "ru"
+    finally:
+        if old_org is None:
+            sys.modules.pop("org", None)
+        else:
+            sys.modules["org"] = old_org
+        if old_telegram is None:
+            sys.modules.pop("org.telegram", None)
+        else:
+            sys.modules["org.telegram"] = old_telegram
+        if old_messenger is None:
+            sys.modules.pop("org.telegram.messenger", None)
+        else:
+            sys.modules["org.telegram.messenger"] = old_messenger
+
+
+def test_language_selection_and_color_labels():
+    plugin = make_plugin()
+    assert plugin._text("Frame", "Рамка") == "Frame"
+    assert plugin._frame_color_label(0) == "Theme"
+    plugin._app_language = lambda: "ru"
+    assert plugin._text("Frame", "Рамка") == "Рамка"
+    assert plugin._frame_color_label(1) == "Акцент"
+
+
+def test_continuous_slider_updates_label_and_defers_persistence():
+    plugin = make_plugin()
+    helper = module._FrameSettingsViewFactory(plugin)
+    labels = []
+    helper.value_label = types.SimpleNamespace(
+        setText=lambda value: labels.append(value)
+    )
+
+    helper._on_slider(False, 0.0)
+    assert labels[-1] == "0.5 dp"
+    assert "frame_thickness" not in plugin.settings
+
+    helper._on_slider(True, 1.0)
+    assert labels[-1] == "3.0 dp"
+    assert plugin.settings["frame_thickness"] == 3.0
+
+
 def test_create_settings_uses_supported_ui_items():
     ui_module = types.ModuleType("ui")
     settings_module = types.ModuleType("ui.settings")
@@ -371,7 +436,7 @@ def test_create_settings_uses_supported_ui_items():
             self.args = args
             self.__dict__.update(kwargs)
 
-    for name in ("Header", "Selector", "Slider", "Switch"):
+    for name in ("Custom", "Header", "SimpleSettingFactory", "Switch"):
         setattr(settings_module, name, Item)
     ui_module.settings = settings_module
     old_ui = sys.modules.get("ui")
@@ -382,9 +447,9 @@ def test_create_settings_uses_supported_ui_items():
         items = module.BotilePlugin().create_settings()
         by_key = {item.key: item for item in items if hasattr(item, "key")}
         assert by_key["frame_enabled"].default is True
-        assert by_key["frame_color"].items[0] == "Theme / Тема"
-        assert by_key["frame_thickness"].min == 0.5
-        assert by_key["frame_thickness"].max == 3.0
+        assert by_key["frame_enabled"].text == "Show frame"
+        custom = [item for item in items if hasattr(item, "factory")]
+        assert len(custom) == 1
     finally:
         if old_ui is None:
             sys.modules.pop("ui", None)

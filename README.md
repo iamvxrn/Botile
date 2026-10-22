@@ -36,19 +36,25 @@ on every build.
 
 ## Frame settings
 
-Open **Settings → Plugins → Botile**. The settings use the exteraless
-`Switch`, `Selector`, and `Slider` items:
+Open **Settings → Plugins → Botile**. The screen follows the active exteraless
+language (`LocaleController.getLocaleStringIso639()`): Russian when the client
+language is Russian, otherwise English. The frame controls use the documented
+`SimpleSettingFactory`/`Custom` API:
 
-- **Show frame / Показывать рамку** — enabled by default, preserving 1.1.3.
-- **Frame color / Цвет рамки** — `Theme` (adaptive light/dark text color),
-  `Accent`, `White`, or `Black`.
-- **Frame thickness / Толщина рамки** — 0.5–3.0 dp in 0.5 dp steps; default
-  1 dp.
+- **Show frame** — enabled by default, preserving 1.1.3.
+- **Frame color** — a real swatch palette: adaptive `Theme`, `Accent`, `White`,
+  and `Black`. The Theme and Accent swatches read current `Theme` colors; the
+  palette does not use fixed dark colors.
+- **Frame thickness** — a compact custom row with the app-native
+  `SeekBarView`, continuous 0.5–3.0 dp movement, live value text, and persistence
+  when the drag ends.
 
-The exteraless settings API has no built-in color picker, so Botile deliberately
-uses a small color preset selector instead of inventing one. The 45% alpha and
-the 11 dp maximum avatar radius remain unchanged. Settings are saved by the
-plugin runtime and apply on the next avatar draw.
+The exteraless settings API has no built-in color picker, so Botile uses the
+palette instead of inventing one. The native `SeekBarView` reads the app's
+`NaConfig.sliderStyle` (default, Modern, or MD3), so the control follows the
+active app style; in this build there is no separate literal "MD3E" flag. The
+45% alpha and 11 dp maximum avatar radius remain unchanged. Settings apply on
+the next avatar draw.
 
 ## What it does
 
@@ -119,11 +125,15 @@ After installing on exteraless:
 1. Open the main chat list with a bot, user, group, and channel.
 2. Check that the bot is a rounded square with a thin outline; users, groups,
    and channels keep their shape and have no Botile outline.
-3. Open Botile settings: disable the frame, change its color and thickness, and
-   verify the changes apply to bots on the next draw.
-4. Repeat in light and dark themes, a bot chat, a bot profile, and a forwarded
+3. Open Botile settings: switch the app language between Russian and English
+   and reopen the screen; labels and descriptions must match the active language.
+4. Check the color swatches and the compact thickness slider. Drag it slowly and
+   confirm the thumb and value move continuously and the slider follows the
+   app's selected style (including MD3 where enabled). Toggle the frame and
+   verify changes apply to bots on the next draw.
+5. Repeat in light and dark themes, a bot chat, a bot profile, and a forwarded
    or reply preview. Scroll to force cell recycling.
-5. Collect `adb logcat` and screenshots. Useful lines include
+6. Collect `adb logcat` and screenshots. Useful lines include
    `diag hooks permission=True`, `hook bind: installed`,
    `hook border: installed draw outline`, and `diag first bind: ... bot=True`.
 
