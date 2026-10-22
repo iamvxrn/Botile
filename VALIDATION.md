@@ -11,7 +11,7 @@ screenshots; do not mark a step passed from logs alone.
 ## Prerequisites / Предварительные условия
 
 - exteraless `>= 12.10.6` with plugin SDK `>= 1.4.5.3` (Botile metadata minimum).
-- Botile `1.1.0` installed and enabled.
+- Botile `1.1.1` installed and enabled.
 - The **hooks** permission granted and trust level **Trusted**. Without it the
   log contains `diag hooks permission=False`.
 - ADB access from the computer: `adb devices` lists the phone.
@@ -19,7 +19,7 @@ screenshots; do not mark a step passed from logs alone.
 
 - exteraless `>= 12.10.6` с SDK плагинов `>= 1.4.5.3` (минимум в метаданных
   Botile).
-- Botile `1.1.0` установлен и включён.
+- Botile `1.1.1` установлен и включён.
 - Разрешение **hooks** выдано, уровень доверия **Trusted**. Без этого в журнале
   будет `diag hooks permission=False`.
 - ADB с компьютера: `adb devices` показывает телефон.
@@ -44,7 +44,7 @@ exteraless из **Настройки → О программе** и версию
 ## Expected load log / Ожидаемый журнал загрузки
 
 ```text
-Botile 1.1.0 starting (installed metadata version=1.1.0)
+Botile 1.1.1 starting (installed metadata version=1.1.1)
 diag hooks permission=True
 diag sdk=...
 hook bind: installed ImageReceiver.setForUserOrChat
@@ -66,14 +66,14 @@ line. If `hooks permission=False`, grant the permission before any visual test.
 
 ### 1. Load and version / Загрузка и версия
 
-- [ ] Botile 1.1.0 appears in the plugin list.
-- [ ] The log contains `Botile 1.1.0 starting (installed metadata version=1.1.0)`.
+- [ ] Botile 1.1.1 appears in the plugin list.
+- [ ] The log contains `Botile 1.1.1 starting (installed metadata version=1.1.1)`.
 - [ ] `diag hooks permission=True`.
 - [ ] `diag sdk` shows the actual SDK.
 - [ ] `diag native_hooks ready=True broken=False`.
 
-- [ ] Botile 1.1.0 виден в списке плагинов.
-- [ ] В журнале есть `Botile 1.1.0 starting (installed metadata version=1.1.0)`.
+- [ ] Botile 1.1.1 виден в списке плагинов.
+- [ ] В журнале есть `Botile 1.1.1 starting (installed metadata version=1.1.1)`.
 - [ ] `diag hooks permission=True`.
 - [ ] `diag sdk` показывает фактический SDK.
 - [ ] `diag native_hooks ready=True broken=False`.

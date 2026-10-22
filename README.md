@@ -2,7 +2,7 @@
 
 **Give bots a distinct avatar shape.**
 
-Version **1.1.0**. Botile renders Telegram bot avatars as rounded squares while
+Version **1.1.1**. Botile renders Telegram bot avatars as rounded squares while
 leaving regular users, groups, channels, and custom images at the radius the
 client chose.
 
@@ -15,10 +15,10 @@ client chose.
    modify Java views without the `hooks` permission. If you install without it,
    Botile logs a clear message and stays inactive.
 3. Enable Botile.
-4. Confirm the loaded file is actually 1.1.0. The plugin log should begin with:
+4. Confirm the loaded file is actually 1.1.1. The plugin log should begin with:
 
    ```text
-   Botile 1.1.0 starting (installed metadata version=1.1.0)
+   Botile 1.1.1 starting (installed metadata version=1.1.1)
    ```
 
 No root, LSPosed, APK modification, network access, or extra Python packages are
@@ -82,20 +82,29 @@ and logs hook registration, first invocation, bot detection, radius overrides,
 read-back radius, custom-image clearing, and failures. **A device log is still
 required before calling the visual problem fixed.**
 
+## Runtime fix in 1.1.1
+
+The device log from exteraless 12.10.6 (`00c14f4`) showed that 1.1.0 stopped
+before registering hooks: its class proxy did not provide singular
+`getDeclaredMethod()`. Version 1.1.1 selects exact overloads from
+`getDeclaredMethods()` and passes the reflected method to `hook_method()`, which
+is the SDK-supported path. This fixes startup lookup; visual behavior still
+needs the phone protocol below.
+
 ## Coverage matrix
 
 | UI surface | Implementation | Status |
 |---|---|---|
-| Main dialog list | `ImageReceiver.setForUserOrChat` + `setRoundRadius`; `DialogCell.update` fallback | Implemented; static/mock tested; device pending |
-| Dialog search results using `DialogCell` | Same central hooks + `DialogCell` fallback | Implemented; static/mock tested; device pending |
-| Search results using `ProfileSearchCell` | Direct `ImageReceiver.setImage(..., parentObject=user/chat, ...)` with parent-class allowlist | Implemented; static/mock tested; device pending |
-| Sender avatars in private/group messages (`ChatMessageCell`) | Central bind + radius hooks | Implemented; static/mock tested; device pending |
-| Group member lists and share sheets (`UserCell`, `ShareDialogCell`, `HintDialogCell`) | Central bind + radius hooks | Implemented; static/mock tested; device pending |
-| Chat header avatar (`ChatAvatarContainer`) | Central bind + radius hooks | Implemented; static/mock tested; device pending |
-| Bot profile, normal photo (`ProfileActivity$AvatarImageView`) | Direct `setImage` parent allowlist + radius hook | Implemented; static/mock tested; device pending |
-| Bot profile, normal photo (`ProfileActivity2$AvatarImage`) | Direct `setImage` parent allowlist + radius hook | Implemented; static/mock tested; device pending |
-| Reply previews / forwarded mini avatars (`AvatarSpan`) | Central `setForUserOrChat` + radius hooks | Implemented; static/mock tested; device pending |
-| Other widgets using `ImageReceiver.setForUserOrChat` | Central hooks | Implemented; static/mock tested; device pending |
+| Main dialog list | `ImageReceiver.setForUserOrChat` + `setRoundRadius`; `DialogCell.update` fallback | Implemented; source inspected; device pending |
+| Dialog search results using `DialogCell` | Same central hooks + `DialogCell` fallback | Implemented; source inspected; device pending |
+| Search results using `ProfileSearchCell` | Direct `ImageReceiver.setImage(..., parentObject=user/chat, ...)` with parent-class allowlist | Implemented; source inspected; device pending |
+| Sender avatars in private/group messages (`ChatMessageCell`) | Central bind + radius hooks | Implemented; source inspected; device pending |
+| Group member lists and share sheets (`UserCell`, `ShareDialogCell`, `HintDialogCell`) | Central bind + radius hooks | Implemented; source inspected; device pending |
+| Chat header avatar (`ChatAvatarContainer`) | Central bind + radius hooks | Implemented; source inspected; device pending |
+| Bot profile, normal photo (`ProfileActivity$AvatarImageView`) | Direct `setImage` parent allowlist + radius hook | Implemented; source inspected; device pending |
+| Bot profile, normal photo (`ProfileActivity2$AvatarImage`) | Direct `setImage` parent allowlist + radius hook | Implemented; source inspected; device pending |
+| Reply previews / forwarded mini avatars (`AvatarSpan`) | Central `setForUserOrChat` + radius hooks | Implemented; source inspected; device pending |
+| Other widgets using `ImageReceiver.setForUserOrChat` | Central hooks | Implemented; source inspected; device pending |
 | Bot profile vector/video avatar set only through `setImageBitmap` | No TLRPC entity is available at that call site | **Not covered reliably**; documented limitation |
 | Full-screen photo viewer | Intentionally excluded (a photo is not an avatar) | Not covered by design |
 | Notifications and non-UI rendering | No `ImageReceiver` avatar path | Not covered |
@@ -207,7 +216,7 @@ Also check the in-app plugin log: **Settings → Plugins → Botile → log**.
 ### Expected successful sequence
 
 ```text
-Botile 1.1.0 starting (installed metadata version=1.1.0)
+Botile 1.1.1 starting (installed metadata version=1.1.1)
 diag hooks permission=True
 diag sdk=1.4.5.3
 hook bind: installed ImageReceiver.setForUserOrChat
@@ -232,7 +241,7 @@ diag periodic: binds=500 bots=... nonbots=... overrides=... verified=... clears=
 
 | Log evidence | Meaning / next step |
 |---|---|
-| No `Botile 1.1.0 starting` line | Plugin is not loaded/enabled, or the installed file is still 1.0. Reinstall and check **Plugins → Botile**. |
+| No `Botile 1.1.1 starting` line | Plugin is not loaded/enabled, or the installed file is old. Reinstall and check **Plugins → Botile**. |
 | `diag hooks permission=False` | Grant the **hooks** permission, then disable/re-enable Botile. |
 | `diag native_hooks ready=False broken=True` | Exteraless disabled native hooks after a crash. Restart/reinstall the client and clear the plugin engine's native-hook failure state; without Aliuhook Botile cannot work. |
 | `hook bind: FAILED ...` | The inclusive hook runtime rejected/reflection-failed the method. The log includes the exact method and exception. |
@@ -243,10 +252,12 @@ diag periodic: binds=500 bots=... nonbots=... overrides=... verified=... clears=
 | `diag direct avatar parent not covered: ...` | A direct-image avatar surface is not in the allowlist. Send the logged class name; it can be added as a targeted hook. |
 | `overrides>0`, `verified>0`, but no visual change | The receiver value is correct but the drawable/clip path is not honoring it on that surface. This must be checked with a device screenshot and the relevant parent class. |
 
-**No Android runtime log exists for this implementation yet.** Static analysis
-and mocks cannot prove pixels on screen. Do not mark Botile visually fixed until
-the log shows `binds>0`, `bots>0`, `overrides>0`, `verified>0` and a device
-screenshot shows rounded-square bot avatars with circular regular users.
+**An Android runtime log is now available for 1.1.0:** it confirms hook
+registration failed at method lookup. Version 1.1.1 fixes that lookup, but still
+needs a device run. Static analysis and mocks cannot prove pixels on screen;
+mark the visual issue fixed only after the new log shows hooks installed and
+`binds>0`, `bots>0`, `overrides>0`, `verified>0`, with a screenshot showing
+rounded-square bot avatars and circular regular users.
 
 ## Verification performed
 
@@ -256,29 +267,16 @@ screenshot shows rounded-square bot avatars with circular regular users.
   compatible with the app's Python 3.11).
 - Metadata parsed with exteraless's actual AST parser:
   `id=botile`, `name=Botile`, `description=Give bots a distinct avatar shape.`,
-  `version=1.1.0`, `permissions=["hooks"]`, no requirements.
+  `version=1.1.1`, `permissions=["hooks"]`, no requirements.
 - Actual exteraless capability scan: only `hooks`, no network/files/message
   permission markers.
-- Mock behavioral harness passed, including
-  `python3 tests/test_state_preservation.py`:
-  - bot bind marks receiver and applies the 11 dp maximum;
-  - dialog's later `setRoundRadius` is overridden and read back;
-  - regular-user recycle restores the baseline and clears the mark;
-  - group/channel recycle restores the baseline;
-  - bot → user → bot recycling;
-  - a `0,0,0,0` baseline is restored exactly on bot → non-bot and on unload;
-  - asymmetric `[10,20,30,40]` baselines are preserved through bot → non-bot,
-    the radius hook, and unload;
-  - a pre-existing `mark` is saved and restored;
-  - a later external mark is left untouched during clear/unload;
-  - direct profile/search parent paths apply and restore;
-  - unknown direct parent is refused and logged;
-  - custom `setImage` and `setImageBitmap` clear bot styling;
-  - `DialogCell` fallback only touches marked receivers;
-  - unload unhooks and restores baselines;
-  - denied hooks, missing `ImageReceiver`, and failed bind registration fail
-    gracefully and log the reason;
-  - a small avatar receives a proportionally smaller radius.
+- `python3 tests/test_state_preservation.py` passed with 11 host-side tests:
+  - exact Java method overload selection through `getDeclaredMethods()`;
+  - missing overloads return cleanly;
+  - zero and asymmetric radii restore on recycle and unload;
+  - existing and later external `mark` values are preserved.
+- These mocks cover method selection and state restoration only. They do not
+  execute Aliuhook callbacks or verify Android rendering.
 
 ### Statically verified against source/APK
 
@@ -356,7 +354,7 @@ Key files/classes:
 ## Files
 
 - `Botile.plugin` — installable plugin (Python source with metadata), version
-  1.1.0.
+  1.1.1.
 - `README.md` — this English document.
 - `README.ru.md` — Russian documentation.
 - `VALIDATION.md` — bilingual English/Russian phone validation protocol.

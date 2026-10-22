@@ -23,7 +23,7 @@ __id__ = "botile"
 __name__ = "Botile"
 __description__ = "Give bots a distinct avatar shape."
 __author__ = "Botile contributors"
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.10.6"
 __sdk_version__ = ">=1.4.5.3"
@@ -50,6 +50,24 @@ def _is_direct_avatar_parent(name):
         if name == parent or name.startswith(parent + "$"):
             return True
     return False
+
+def _find_declared_method(clazz, name, parameter_names):
+    """Find one overload through the SDK's Java class proxy."""
+    expected = tuple(parameter_names)
+    methods = clazz.getDeclaredMethods()
+    for index in range(len(methods)):
+        method = methods[index]
+        if str(method.getName()) != name:
+            continue
+        parameters = method.getParameterTypes()
+        if len(parameters) != len(expected):
+            continue
+        actual = tuple(str(parameters[i].getName()) for i in range(len(parameters)))
+        if actual == expected:
+            method.setAccessible(True)
+            return method
+    return None
+
 
 MARK_CONDITION = (
     'thisObject.getMark() != null && '
@@ -298,20 +316,21 @@ class BotilePlugin(BasePlugin):
 
     def _install_bind_hook(self, image_receiver):
         try:
-            from android.graphics.drawable import Drawable
-            from java.lang import Boolean, Integer, Object
-            from org.telegram.tgnet import TLObject
-
-            method = image_receiver.getDeclaredMethod(
+            method = _find_declared_method(
+                image_receiver,
                 "setForUserOrChat",
-                TLObject,
-                Drawable,
-                Object,
-                Boolean.TYPE,
-                Integer.TYPE,
-                Boolean.TYPE,
+                (
+                    "org.telegram.tgnet.TLObject",
+                    "android.graphics.drawable.Drawable",
+                    "java.lang.Object",
+                    "boolean",
+                    "int",
+                    "boolean",
+                ),
             )
-            method.setAccessible(True)
+            if method is None:
+                self.log("hook bind: FAILED exact ImageReceiver.setForUserOrChat signature not found")
+                return False
             unhook = self.hook_method(method, _BindHook(self), priority=50)
             if unhook is None:
                 self.log("hook bind: FAILED (registrar returned nothing)")
@@ -340,25 +359,26 @@ class BotilePlugin(BasePlugin):
 
     def _install_image_hook(self, image_receiver, image_filter):
         try:
-            from android.graphics.drawable import Drawable
-            from java.lang import Integer, Long, Object, String
-            from org.telegram.messenger import ImageLocation
-
-            method = image_receiver.getDeclaredMethod(
+            method = _find_declared_method(
+                image_receiver,
                 "setImage",
-                ImageLocation,
-                String,
-                ImageLocation,
-                String,
-                ImageLocation,
-                String,
-                Drawable,
-                Long.TYPE,
-                String,
-                Object,
-                Integer.TYPE,
+                (
+                    "org.telegram.messenger.ImageLocation",
+                    "java.lang.String",
+                    "org.telegram.messenger.ImageLocation",
+                    "java.lang.String",
+                    "org.telegram.messenger.ImageLocation",
+                    "java.lang.String",
+                    "android.graphics.drawable.Drawable",
+                    "long",
+                    "java.lang.String",
+                    "java.lang.Object",
+                    "int",
+                ),
             )
-            method.setAccessible(True)
+            if method is None:
+                self.log("hook image: FAILED exact ImageReceiver.setImage signature not found")
+                return
             unhook = self._hook(
                 label="image",
                 method=method,
@@ -400,12 +420,14 @@ class BotilePlugin(BasePlugin):
 
     def _install_dialog_hook(self, dialog_cell):
         try:
-            from java.lang import Boolean, Integer
-
-            method = dialog_cell.getDeclaredMethod(
-                "update", Integer.TYPE, Boolean.TYPE
+            method = _find_declared_method(
+                dialog_cell,
+                "update",
+                ("int", "boolean"),
             )
-            method.setAccessible(True)
+            if method is None:
+                self.log("hook dialog: FAILED exact DialogCell.update(int, boolean) signature not found")
+                return
             unhook = self._hook(
                 label="dialog",
                 method=method,

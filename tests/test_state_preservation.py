@@ -236,6 +236,58 @@ def test_unload_leaves_later_external_mark():
     assert receiver.mark == "later-unload", receiver.mark
 
 
+class FakeReflectedParameter:
+    def __init__(self, name):
+        self.name = name
+
+    def getName(self):
+        return self.name
+
+
+class FakeReflectedMethod:
+    def __init__(self, name, parameter_names):
+        self.name = name
+        self.parameters = [FakeReflectedParameter(value) for value in parameter_names]
+        self.accessible = False
+
+    def getName(self):
+        return self.name
+
+    def getParameterTypes(self):
+        return self.parameters
+
+    def setAccessible(self, value):
+        self.accessible = bool(value)
+
+
+class FakeClassProxy:
+    """Expose only getDeclaredMethods, like the runtime class proxy."""
+    def __init__(self, methods):
+        self.methods = methods
+
+    def getDeclaredMethods(self):
+        return self.methods
+
+
+def test_exact_method_overload_resolution():
+    wrong = FakeReflectedMethod("setImage", ("java.lang.String",))
+    expected = FakeReflectedMethod("setImage", ("java.lang.String", "int"))
+    clazz = FakeClassProxy([wrong, expected])
+    found = module._find_declared_method(
+        clazz, "setImage", ("java.lang.String", "int")
+    )
+    assert found is expected
+    assert expected.accessible
+    assert not wrong.accessible
+
+
+def test_missing_method_overload_returns_none():
+    clazz = FakeClassProxy([FakeReflectedMethod("update", ("int",))])
+    assert module._find_declared_method(
+        clazz, "update", ("int", "boolean")
+    ) is None
+
+
 def main():
     tests = [
         value for name, value in sorted(globals().items())
