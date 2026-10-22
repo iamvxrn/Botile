@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Phone validation protocol
+    url: https://github.com/iamvxrn/Botile/blob/main/VALIDATION.md
+    about: Collect the required device log and screenshots before filing a visual bug.
+  - name: Security report
+    url: https://github.com/iamvxrn/Botile/security/advisories/new
+    about: Report vulnerabilities privately; do not open a public issue.

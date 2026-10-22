@@ -23,13 +23,15 @@ __id__ = "botile"
 __name__ = "Botile"
 __description__ = "Give bots a distinct avatar shape."
 __author__ = "Botile contributors"
-__version__ = "1.1.1"
+__version__ = "1.1.3"
 __icon__ = "exteraPlugins/1"
 __app_version__ = ">=12.10.6"
 __sdk_version__ = ">=1.4.5.3"
 __permissions__ = ["hooks"]
 
 BOT_CORNER_RADIUS_DP = 11
+BOT_BORDER_WIDTH_DP = 1.0
+BOT_BORDER_ALPHA = 0.45
 MARKER = "botile:bot"
 SUMMARY_EVERY = 500
 
@@ -51,10 +53,45 @@ def _is_direct_avatar_parent(name):
             return True
     return False
 
+def _as_java_class(clazz):
+    """Normalize find_class()'s jclass proxy to java.lang.Class.
+
+    find_class() returns the Chaquopy class wrapper, not a Class instance.
+    getDeclaredMethods()/getDeclaredMethod() are instance methods of
+    java.lang.Class and are not exposed on that wrapper. The SDK's own
+    hook_utils._as_class() performs exactly this normalization; keep the
+    fallback for SDK variants where the private helper is absent.
+    """
+    if clazz is None:
+        return None
+    try:
+        from hook_utils import _as_class
+
+        normalized = _as_class(clazz)
+        if normalized is not None:
+            return normalized
+    except Exception:
+        pass
+    try:
+        from java.lang import Class
+
+        if isinstance(clazz, Class):
+            return clazz
+    except Exception:
+        pass
+    try:
+        return clazz.getClass()
+    except Exception:
+        return clazz
+
+
 def _find_declared_method(clazz, name, parameter_names):
-    """Find one overload through the SDK's Java class proxy."""
+    """Find one overload after normalizing the SDK's Java class proxy."""
+    target = _as_java_class(clazz)
+    if target is None:
+        return None
     expected = tuple(parameter_names)
-    methods = clazz.getDeclaredMethods()
+    methods = target.getDeclaredMethods()
     for index in range(len(methods)):
         method = methods[index]
         if str(method.getName()) != name:
@@ -73,6 +110,9 @@ MARK_CONDITION = (
     'thisObject.getMark() != null && '
     'thisObject.getMark().equals("%s")' % MARKER
 )
+# Only UI draws: background-thread draws pass a holder and own a Canvas that
+# must not be touched from the Python callback.
+BORDER_CONDITION = MARK_CONDITION + ' && args[1] == null'
 
 
 def _entity_is_bot(entity):
@@ -172,6 +212,25 @@ class _BitmapHook(MethodHook):
             plugin._report_hook_error("bitmap", error)
 
 
+class _BorderDrawHook(MethodHook):
+    """Draw an optional thin outline after a bot avatar has been painted."""
+
+    def __init__(self, plugin):
+        self._plugin = plugin
+
+    def after_hooked_method(self, param):
+        plugin = self._plugin
+        try:
+            if not param.getResult():
+                return
+            args = param.args
+            if args is None or len(args) < 2 or args[1] is not None:
+                return
+            plugin._draw_bot_border(args[0], param.thisObject)
+        except Exception as error:
+            plugin._report_hook_error("border", error)
+
+
 class _DialogFallbackHook(MethodHook):
     """Re-apply the radius after DialogCell finishes its own radius update."""
 
@@ -203,6 +262,10 @@ class BotilePlugin(BasePlugin):
     _marks = None
     _mark_nulls = None
     _arrays = None
+    _border_paint = None
+    _border_rect = None
+    _border_stroke = 1.0
+    _theme = None
     _local = None
     _lock = None
 
@@ -254,11 +317,38 @@ class BotilePlugin(BasePlugin):
             )
             return
 
+        self._border_paint = None
+        self._border_rect = None
+        self._theme = None
         try:
-            image_receiver = find_class("org.telegram.messenger.ImageReceiver")
-            dialog_cell = find_class("org.telegram.ui.Cells.DialogCell")
+            from android.graphics import Paint, RectF
+            from org.telegram.ui.ActionBar import Theme
+
+            self._theme = Theme
+            self._border_stroke = max(1.0, float(AndroidUtilities.dpf2(BOT_BORDER_WIDTH_DP)))
+            self._border_paint = Paint()
+            self._border_paint.setAntiAlias(True)
+            self._border_paint.setStyle(Paint.Style.STROKE)
+            self._border_paint.setStrokeWidth(self._border_stroke)
+            self._border_rect = RectF()
+        except Exception as error:
+            self.log(
+                "diag border disabled: %s: %s"
+                % (type(error).__name__, error)
+            )
+
+        try:
+            image_receiver = _as_java_class(
+                find_class("org.telegram.messenger.ImageReceiver")
+            )
+            dialog_cell = _as_java_class(
+                find_class("org.telegram.ui.Cells.DialogCell")
+            )
             if image_receiver is None:
-                self.log("Botile inactive: ImageReceiver class not found")
+                self.log(
+                    "Botile inactive: ImageReceiver class not found or "
+                    "its proxy could not be normalized to java.lang.Class"
+                )
                 return
 
             mark_filter = HookFilter.Condition(MARK_CONDITION)
@@ -275,6 +365,7 @@ class BotilePlugin(BasePlugin):
 
             self._install_radius_hook(image_receiver, mark_filter)
             self._install_image_hook(image_receiver, image_filter)
+            self._install_border_hook(image_receiver)
             self._install_bitmap_hooks(image_receiver, mark_filter)
             if dialog_cell is not None:
                 self._install_dialog_hook(dialog_cell)
@@ -282,8 +373,13 @@ class BotilePlugin(BasePlugin):
                 self.log("Botile note: DialogCell not found; central hooks remain active")
 
             self.log(
-                "Botile hooks: bind=OK radius=%s image=%s dialog=%s"
-                % (self._flag("radius"), self._flag("image"), self._flag("dialog"))
+                "Botile hooks: bind=OK radius=%s image=%s border=%s dialog=%s"
+                % (
+                    self._flag("radius"),
+                    self._flag("image"),
+                    self._flag("border"),
+                    self._flag("dialog"),
+                )
             )
             self._log_runtime_state(after_hooks=True)
         except Exception as error:
@@ -392,6 +488,30 @@ class BotilePlugin(BasePlugin):
                 "hook image: FAILED %s: %s"
                 % (type(error).__name__, error)
             )
+
+    def _install_border_hook(self, image_receiver):
+        if self._border_paint is None:
+            self.log("hook border: skipped (border Paint/RectF unavailable)")
+            return
+        method = _find_declared_method(
+            image_receiver,
+            "draw",
+            (
+                "android.graphics.Canvas",
+                "org.telegram.messenger.ImageReceiver$BackgroundThreadDrawHolder",
+            ),
+        )
+        if method is None:
+            self.log("hook border: FAILED exact ImageReceiver.draw signature not found")
+            return
+        unhook = self._hook(
+            label="border",
+            method=method,
+            handler=_BorderDrawHook(self),
+            after_filters=[HookFilter.Condition(BORDER_CONDITION)],
+        )
+        if unhook is not None:
+            self.log("hook border: installed ImageReceiver.draw outline")
 
     def _install_bitmap_hooks(self, image_receiver, mark_filter):
         try:
@@ -679,6 +799,58 @@ class BotilePlugin(BasePlugin):
             finally:
                 self._exit_apply()
 
+    def _draw_bot_border(self, canvas, receiver):
+        """Draw a thin theme-adaptive inset outline around a bot avatar."""
+        if (
+            canvas is None
+            or receiver is None
+            or self._border_paint is None
+            or self._border_rect is None
+            or self._theme is None
+        ):
+            return
+        if not self._is_marked(receiver):
+            return
+        try:
+            width = float(receiver.getImageWidth())
+            height = float(receiver.getImageHeight())
+        except Exception:
+            return
+        if width <= 0 or height <= 0:
+            return
+        try:
+            alpha = float(receiver.getAlpha()) * float(receiver.getCurrentAlpha())
+        except Exception:
+            alpha = 1.0
+        alpha = max(0.0, min(1.0, alpha))
+        if alpha <= 0.01:
+            return
+        stroke = self._border_stroke
+        inset = stroke * 0.5
+        if width <= stroke or height <= stroke:
+            return
+        rect = self._border_rect
+        x = float(receiver.getImageX())
+        y = float(receiver.getImageY())
+        rect.set(x + inset, y + inset, x + width - inset, y + height - inset)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        radius = 0.0
+        try:
+            radii = receiver.getRoundRadius()
+            if radii is not None and len(radii) > 0:
+                radius = float(radii[0])
+        except Exception:
+            pass
+        radius = max(0.0, min(radius, min(rect.width(), rect.height()) * 0.5))
+        # Adaptive high-contrast text color: no hardcoded RGB, follows light/dark.
+        color = self._theme.getColor(self._theme.key_windowBackgroundWhiteBlackText)
+        self._border_paint.setColor(
+            self._theme.multAlpha(color, BOT_BORDER_ALPHA * alpha)
+        )
+        self._border_paint.setStrokeWidth(stroke)
+        canvas.drawRoundRect(rect, radius, radius, self._border_paint)
+
     def _clear_bot(self, receiver, source):
         with self._lock:
             if receiver is None:
@@ -821,11 +993,12 @@ class BotilePlugin(BasePlugin):
             self.log("diag native hooks query failed: %s" % error)
         if after_hooks:
             self.log(
-                "diag hooks_ok bind=%s radius=%s image=%s bitmap=%s dialog=%s"
+                "diag hooks_ok bind=%s radius=%s image=%s border=%s bitmap=%s dialog=%s"
                 % (
                     self._flag("bind"),
                     self._flag("radius"),
                     self._flag("image"),
+                    self._flag("border"),
                     self._flag("bitmap"),
                     self._flag("dialog"),
                 )

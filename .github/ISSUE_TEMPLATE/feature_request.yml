@@ -1,0 +1,68 @@
+name: Feature request
+description: Suggest a focused improvement for Botile.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Botile intentionally keeps a narrow scope: bot avatar shape and a thin
+        outline. Explain the user problem before proposing a specific renderer
+        hook or UI change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is difficult or missing today?
+      placeholder: "When I ..., I cannot ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest change that would solve the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Bot avatar shape
+        - Bot avatar outline
+        - Compatibility with an exteraless build
+        - Documentation or validation
+        - Repository / release engineering
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Client source, screenshots, or log evidence
+      description: Link exact classes/methods or builds where possible. Do not paste secrets.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked README.md and VALIDATION.md for existing behavior and limitations.
+          required: true
+        - label: I did not include secrets, tokens, phone numbers, chat IDs, or personal data.
+          required: true

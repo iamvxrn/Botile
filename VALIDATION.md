@@ -11,7 +11,9 @@ screenshots; do not mark a step passed from logs alone.
 ## Prerequisites / Предварительные условия
 
 - exteraless `>= 12.10.6` with plugin SDK `>= 1.4.5.3` (Botile metadata minimum).
-- Botile `1.1.1` installed and enabled.
+- Botile `1.1.3` installed and enabled.
+- For a release build, download `Botile-<version>.plugin` and verify
+  `SHA256SUMS`; the asset is byte-identical to `Botile.plugin`.
 - The **hooks** permission granted and trust level **Trusted**. Without it the
   log contains `diag hooks permission=False`.
 - ADB access from the computer: `adb devices` lists the phone.
@@ -19,7 +21,9 @@ screenshots; do not mark a step passed from logs alone.
 
 - exteraless `>= 12.10.6` с SDK плагинов `>= 1.4.5.3` (минимум в метаданных
   Botile).
-- Botile `1.1.1` установлен и включён.
+- Botile `1.1.3` установлен и включён.
+- Для релизной сборки скачайте `Botile-<version>.plugin` и проверьте
+  `SHA256SUMS`; ассет побайтово совпадает с `Botile.plugin`.
 - Разрешение **hooks** выдано, уровень доверия **Trusted**. Без этого в журнале
   будет `diag hooks permission=False`.
 - ADB с компьютера: `adb devices` показывает телефон.
@@ -44,15 +48,16 @@ exteraless из **Настройки → О программе** и версию
 ## Expected load log / Ожидаемый журнал загрузки
 
 ```text
-Botile 1.1.1 starting (installed metadata version=1.1.1)
+Botile 1.1.3 starting (installed metadata version=1.1.3)
 diag hooks permission=True
 diag sdk=...
 hook bind: installed ImageReceiver.setForUserOrChat
 hook radius: installed ImageReceiver.setRoundRadius(int[])
 hook image: installed ImageReceiver.setImage core
+hook border: installed ImageReceiver.draw outline
 hook bitmap: installed ... setImageBitmap overload(s)
 hook dialog: installed DialogCell.update fallback
-Botile hooks: bind=OK radius=... image=... dialog=...
+Botile hooks: bind=OK radius=... image=... border=... dialog=...
 diag native_hooks ready=True broken=False
 ```
 
@@ -66,14 +71,14 @@ line. If `hooks permission=False`, grant the permission before any visual test.
 
 ### 1. Load and version / Загрузка и версия
 
-- [ ] Botile 1.1.1 appears in the plugin list.
-- [ ] The log contains `Botile 1.1.1 starting (installed metadata version=1.1.1)`.
+- [ ] Botile 1.1.3 appears in the plugin list.
+- [ ] The log contains `Botile 1.1.3 starting (installed metadata version=1.1.3)`.
 - [ ] `diag hooks permission=True`.
 - [ ] `diag sdk` shows the actual SDK.
 - [ ] `diag native_hooks ready=True broken=False`.
 
-- [ ] Botile 1.1.1 виден в списке плагинов.
-- [ ] В журнале есть `Botile 1.1.1 starting (installed metadata version=1.1.1)`.
+- [ ] Botile 1.1.3 виден в списке плагинов.
+- [ ] В журнале есть `Botile 1.1.3 starting (installed metadata version=1.1.3)`.
 - [ ] `diag hooks permission=True`.
 - [ ] `diag sdk` показывает фактический SDK.
 - [ ] `diag native_hooks ready=True broken=False`.
@@ -87,18 +92,24 @@ screenshot of the list.
 скриншот списка.
 
 - [ ] The bot avatar is a rounded square.
+- [ ] The bot avatar has a thin contrasting outline.
 - [ ] The regular user avatar keeps its previous shape (normally a circle).
 - [ ] The group avatar is unchanged.
 - [ ] The channel avatar is unchanged.
+- [ ] Regular users, groups, and channels have no Botile outline.
+- [ ] In light and dark themes the outline is visible, thin, and not clipped.
 - [ ] The log shows `diag first bind ... bot=true` for the bot.
 - [ ] The log shows `diag first bot detected`.
 - [ ] The log shows a radius verification such as
       `diag radius verified in receiver after ...`.
 
 - [ ] Аватар бота — скруглённый квадрат.
+- [ ] У аватара бота есть тонкая контрастная обводка.
 - [ ] Аватар обычного пользователя сохраняет прежнюю форму (обычно круг).
 - [ ] Аватар группы не изменён.
 - [ ] Аватар канала не изменён.
+- [ ] У обычных пользователей, групп и каналов нет обводки Botile.
+- [ ] В светлой и тёмной темах обводка видна, тонкая и не обрезана.
 - [ ] В журнале есть `diag first bind ... bot=true` для бота.
 - [ ] В журнале есть `diag first bot detected`.
 - [ ] В журнале есть подтверждение радиуса, например
@@ -264,7 +275,8 @@ Messages) after a bot cell.
 A step passes only when both the log and the screenshot agree. A step is failed
 if the log has `binds=0`, `bots=0`, `overrides=0`, a hook registration failure,
 a `not stuck` radius, or the screenshot shows a circle for a bot / a square for a
-non-bot.
+non-bot. If `hook border` is OK but a bot has no outline, record that as a border
+failure rather than a pass.
 
 A visual change in one case does not prove the other surfaces. Report each case
 separately.
@@ -272,6 +284,8 @@ separately.
 Шаг считается пройденным только если журнал и скриншот совпадают. Шаг не
 пройден, если в журнале `binds=0`, `bots=0`, `overrides=0`, ошибка регистрации
 хука, `not stuck` радиуса, или на скриншоте круг у бота / квадрат у не-бота.
+Если `hook border` в порядке, но у бота нет обводки, это ошибка обводки, а не
+пройденный шаг.
 
 Визуальное изменение в одном кейсе не доказывает остальные поверхности.
 Сообщайте о каждом кейсе отдельно.
@@ -286,6 +300,7 @@ Device / устройство:
 Android / Android:
 Hooks permission / разрешение hooks:
 Native hooks ready / нативные хуки:
+Theme light/dark / тема светлая/тёмная:
 Cases passed / пройденные кейсы:
 Cases failed / непройденные кейсы:
 Screenshots attached / скриншоты:
@@ -301,6 +316,7 @@ Notes / примечания:
 | `hooks permission=False` | grant hooks and re-enable / выдайте hooks и включите заново |
 | `native_hooks ready=False broken=True` | native hook init disabled/broken; restart/reinstall client / нативные хуки отключены или сломаны; перезапустите/переустановите клиент |
 | `hook bind: FAILED` | registration/reflection failed; send exact line / ошибка регистрации/reflection; пришлите строку |
+| `hook border: FAILED` / `diag border disabled` | optional outline unavailable; radius still works / необязательная обводка недоступна; радиус работает |
 | `binds=0` | bind hook not invoked; send full log/build / хук не вызывается; пришлите журнал и сборку |
 | `binds>0`, `bots=0` | entity not detected as bot; send first-bind class/id / сущность не определяется как бот; пришлите класс/id из first bind |
 | `bots>0`, `overrides=0` | radius filter/hook did not run / фильтр или хук радиуса не сработал |
