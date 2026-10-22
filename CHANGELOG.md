@@ -6,7 +6,7 @@ published.
 
 ---
 
-## 1.1.3 — unreleased working tree / незакоммиченное рабочее дерево
+## 1.1.3 — released 2026-10-22 / опубликовано 2026-10-22
 
 **English**
 
@@ -20,8 +20,8 @@ published.
 - Adds read-only CI, a tag-triggered validated release workflow, a stdlib
   packaging/checksum script, repository templates, Dependabot for Actions, and
   release badges. These repository changes do not alter plugin runtime behavior.
-- Status: working-tree changes only. No commit, tag, or GitHub Release has been
-  created for 1.1.3.
+- Status: published as [GitHub Release v1.1.3](https://github.com/iamvxrn/Botile/releases/tag/v1.1.3); the tag points to commit
+  `62fbb689e94dd0ac7e2582f821c321aab6807204`.
 
 **Русский**
 
@@ -35,8 +35,8 @@ published.
 - Добавлены read-only CI, release workflow с проверкой тега, stdlib-скрипт
   сборки/checksum, шаблоны репозитория, Dependabot для Actions и release-бейджи.
   Эти изменения репозитория не меняют runtime-поведение плагина.
-- Статус: изменения только в рабочем дереве. Коммит, тег и GitHub Release для
-  1.1.3 не создавались.
+- Статус: опубликовано как [GitHub Release v1.1.3](https://github.com/iamvxrn/Botile/releases/tag/v1.1.3); тег указывает на коммит
+  `62fbb689e94dd0ac7e2582f821c321aab6807204`.
 
 ---
 
@@ -46,21 +46,21 @@ published.
 
 - Replaced the singular `getDeclaredMethod()` lookup with
   `getDeclaredMethods()` and added tests for exact overload selection.
-- Known issue: the lookup still ran on an unnormalized class proxy; the 1.1.3
-  working changes normalize the proxy before reflection.
+- Known issue: the lookup still ran on an unnormalized class proxy; version
+  1.1.3 normalizes the proxy before reflection.
 - Plugin metadata version: `1.1.1`.
-- Tag/release status: pending at the time of this entry; see
-  `CONTRIBUTING.md` for the reviewed tag plan.
+- Published as [GitHub Release v1.1.1](https://github.com/iamvxrn/Botile/releases/tag/v1.1.1); the tag points to
+  the commit above.
 
 **Русский**
 
 - Единичный вызов `getDeclaredMethod()` заменён на `getDeclaredMethods()`;
   добавлены тесты выбора точной перегрузки.
 - Известная проблема: поиск всё ещё выполнялся на ненормализованном прокси
-  класса; в рабочих изменениях 1.1.3 прокси нормализуется перед reflection.
+  класса; в версии 1.1.3 прокси нормализуется перед reflection.
 - Версия в метаданных плагина: `1.1.1`.
-- Статус тега/релиза: на момент записи ожидает; план тегов и review
-  описаны в `CONTRIBUTING.md`.
+- Опубликовано как [GitHub Release v1.1.1](https://github.com/iamvxrn/Botile/releases/tag/v1.1.1); тег
+  указывает на коммит выше.
 
 Commit: [`aaf46babf172e1147d07d3abbcfd0d837be9ada6`](https://github.com/iamvxrn/Botile/commit/aaf46babf172e1147d07d3abbcfd0d837be9ada6)
 
@@ -76,8 +76,8 @@ Commit: [`aaf46babf172e1147d07d3abbcfd0d837be9ada6`](https://github.com/iamvxrn/
 - Added English/Russian README files, the bilingual phone validation protocol,
   and the first host-side state-preservation tests.
 - Plugin metadata version: `1.1.0`.
-- Tag/release status: pending at the time of this entry; see
-  `CONTRIBUTING.md` for the reviewed tag plan.
+- Published as [GitHub Release v1.1.0](https://github.com/iamvxrn/Botile/releases/tag/v1.1.0); the tag points to
+  the commit above.
 
 **Русский**
 
@@ -87,7 +87,7 @@ Commit: [`aaf46babf172e1147d07d3abbcfd0d837be9ada6`](https://github.com/iamvxrn/
 - Добавлены README на английском/русском, двуязычный протокол проверки на
   телефоне и первые host-side тесты сохранения состояния.
 - Версия в метаданных плагина: `1.1.0`.
-- Статус тега/релиза: на момент записи ожидает; план тегов и review
-  описаны в `CONTRIBUTING.md`.
+- Опубликовано как [GitHub Release v1.1.0](https://github.com/iamvxrn/Botile/releases/tag/v1.1.0); тег
+  указывает на коммит выше.
 
 Commit: [`f2dfd528f10b4d66eea6d2e83f1c58117764e84d`](https://github.com/iamvxrn/Botile/commit/f2dfd528f10b4d66eea6d2e83f1c58117764e84d)
