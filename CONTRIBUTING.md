@@ -50,62 +50,23 @@ workflow runs. The workflow has `contents: write` permission only for publishing
 the release, validates the tag against `__version__`, and uses
 `gh release create --verify-tag`; it never creates or moves a tag.
 
-Historical tag plan:
+Published tags and releases:
 
-| Tag | Commit | Notes |
+| Tag | Commit | Release |
 |---|---|---|
-| `v1.1.0` | `f2dfd528f10b4d66eea6d2e83f1c58117764e84d` | Initial 1.1.0 source commit |
-| `v1.1.1` | `aaf46babf172e1147d07d3abbcfd0d837be9ada6` | 1.1.1 source commit |
-| `v1.1.3` | commit created from the current pending working tree | Pending; do not tag before it is committed |
+| `v1.1.0` | `f2dfd528f10b4d66eea6d2e83f1c58117764e84d` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.0) |
+| `v1.1.1` | `aaf46babf172e1147d07d3abbcfd0d837be9ada6` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.1) |
+| `v1.1.3` | `62fbb689e94dd0ac7e2582f821c321aab6807204` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.3) |
 
-There is **no 1.1.2 commit** in this repository. Do not create a `v1.1.2` tag or
-release.
+There is no `1.1.2` commit, tag, or release. Do not create one retroactively.
 
-Release steps, after review and approval:
-
-1. Merge the approved commit to `main` and wait for CI to pass.
-2. From a clean checkout of that exact commit, verify
-   `git status --short` is empty and `python3 scripts/package_release.py --check`
-   passes.
-3. Create the tag manually, for example:
-   `git tag -a v1.1.3 <commit> -m "Botile 1.1.3"`.
-4. Review the tag, then push only that tag:
-   `git push origin v1.1.3`.
-5. The tag-triggered `Release` workflow re-runs the CI checks, verifies strict
-   tag/version equality and the tag-to-HEAD relationship, packages
-   `Botile-<version>.plugin` plus `SHA256SUMS`, and publishes generated notes.
-6. Backfill historical releases in chronological order (`v1.1.0`, then
-   `v1.1.1`, then the next release) so GitHub's "Latest" release is not an old
-   backfilled release. Verify the "Latest" label afterward.
-
-The release workflow refuses to run the package step on a dirty worktree. Do not
-add automation that creates tags from a version bump, a pull request, or an
-arbitrary commit.
-
-#### Historical backfill
-
-The release workflow is introduced in the 1.1.3 commit, so the `v1.1.0` and
-`v1.1.1` tags predate the workflow file. After reviewing those tags, create
-their two releases manually with the exact bytes from the tags; do not invent a
-1.1.2 release:
-
-```bash
-test "$(git rev-parse v1.1.0^{commit})" = "f2dfd528f10b4d66eea6d2e83f1c58117764e84d"
-tmp="$(mktemp -d)"
-git archive f2dfd52 Botile.plugin | tar -x -C "$tmp"
-cp "$tmp/Botile.plugin" "$tmp/Botile-1.1.0.plugin"
-(cd "$tmp" && sha256sum Botile-1.1.0.plugin > SHA256SUMS)
-gh release create v1.1.0 \
-  --verify-tag \
-  --latest=false \
-  --title "Botile 1.1.0" \
-  --generate-notes \
-  "$tmp/Botile-1.1.0.plugin" "$tmp/SHA256SUMS"
-```
-
-Repeat for `v1.1.1` and `aaf46ba` using the same pattern. Run the historical
-releases in chronological order before the next release, and check GitHub's
-"Latest" label afterward.
+For future releases, merge the version commit to `main` through a pull request
+and wait for the required CI check. Then create and push an annotated
+`vMAJOR.MINOR.PATCH` tag at that exact commit. The tag workflow validates the version, reruns checks,
+packages the plugin and `SHA256SUMS`, and publishes the GitHub Release. It never
+creates or moves tags. Historical releases `v1.1.0` and `v1.1.1` were backfilled
+manually from the exact plugin bytes in their commits because those commits
+predate the release workflow.
 
 ### Local packaging
 
@@ -128,9 +89,12 @@ does not create tags or releases.
 
 ### Repository settings
 
-The owner should enable branch protection for `main` with the CI job as a
-required check, protect `v*` tags, and require review before publishing a
-release. These are GitHub settings, not repository files.
+GitHub currently protects `main` by requiring a pull request and the
+`Syntax and host-side checks` CI job, enforces linear history, blocks force
+pushes/deletion, and protects `v*.*.*` tags from updates/deletion. Pull requests
+require zero approvals because this repository currently has one maintainer.
+GitHub Actions must be pinned to full commit SHAs. These are repository settings
+in addition to the workflows and policy files in the repository.
 
 ### License
 
@@ -186,59 +150,24 @@ workflow. Workflow получает `contents: write` только для пуб
 тег против `__version__` и вызывает `gh release create --verify-tag`; он никогда
 не создаёт и не перемещает теги.
 
-План исторических тегов:
+Опубликованные теги и релизы:
 
-| Тег | Коммит | Примечание |
+| Тег | Коммит | Релиз |
 |---|---|---|
-| `v1.1.0` | `f2dfd528f10b4d66eea6d2e83f1c58117764e84d` | Исходный коммит 1.1.0 |
-| `v1.1.1` | `aaf46babf172e1147d07d3abbcfd0d837be9ada6` | Исходный коммит 1.1.1 |
-| `v1.1.3` | коммит из текущего рабочего дерева | Ожидает коммита; не тегировать заранее |
+| `v1.1.0` | `f2dfd528f10b4d66eea6d2e83f1c58117764e84d` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.0) |
+| `v1.1.1` | `aaf46babf172e1147d07d3abbcfd0d837be9ada6` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.1) |
+| `v1.1.3` | `62fbb689e94dd0ac7e2582f821c321aab6807204` | [GitHub Release](https://github.com/iamvxrn/Botile/releases/tag/v1.1.3) |
 
-В репозитории **нет коммита 1.1.2**. Не создавайте тег или релиз `v1.1.2`.
+В репозитории нет коммита, тега или релиза `1.1.2`. Не создавайте их задним
+числом.
 
-Порядок после review и одобрения:
-
-1. Смержить одобренный коммит в `main` и дождаться зелёного CI.
-2. В чистом checkout этого коммита проверить, что `git status --short` пуст, а
-   `python3 scripts/package_release.py --check` проходит.
-3. Создать тег вручную, например:
-   `git tag -a v1.1.3 <commit> -m "Botile 1.1.3"`.
-4. Проверить тег и отправить только его:
-   `git push origin v1.1.3`.
-5. Workflow `Release` заново запустит проверки CI, сверит строгую версию тега,
-   версию в плагине и коммит, соберёт `Botile-<version>.plugin` и
-   `SHA256SUMS`, затем опубликует release со сгенерированными notes.
-6. Исторические релизы создавать по порядку (`v1.1.0`, затем `v1.1.1`, затем
-   следующий), чтобы GitHub не сделал старый backfilled-релиз «Latest».
-   Проверьте метку «Latest» после этого.
-
-Release workflow откажется пакетировать грязное рабочее дерево. Не добавляйте
-автоматизацию, которая создаёт теги из bump версии, pull request или случайного
-коммита.
-
-#### Исторические релизы
-
-Release workflow появляется в коммите 1.1.3, поэтому теги `v1.1.0` и `v1.1.1`
-старше самого workflow. После review этих тегов создайте два релиза вручную из
-точных байтов тега; не придумывайте релиз 1.1.2:
-
-```bash
-test "$(git rev-parse v1.1.0^{commit})" = "f2dfd528f10b4d66eea6d2e83f1c58117764e84d"
-tmp="$(mktemp -d)"
-git archive f2dfd52 Botile.plugin | tar -x -C "$tmp"
-cp "$tmp/Botile.plugin" "$tmp/Botile-1.1.0.plugin"
-(cd "$tmp" && sha256sum Botile-1.1.0.plugin > SHA256SUMS)
-gh release create v1.1.0 \
-  --verify-tag \
-  --latest=false \
-  --title "Botile 1.1.0" \
-  --generate-notes \
-  "$tmp/Botile-1.1.0.plugin" "$tmp/SHA256SUMS"
-```
-
-Повторите для `v1.1.1` и `aaf46ba` по той же схеме. Создавайте исторические
-релизы по порядку до следующего релиза и проверьте метку GitHub «Latest» после
-этого.
+Для будущих релизов смерджите коммит версии в `main` через pull request и
+дождитесь обязательной проверки CI. Затем создайте и отправьте аннотированный
+тег `vMAJOR.MINOR.PATCH` на этот коммит. Tag workflow проверит версию, повторно
+запустит проверки, соберёт плагин и `SHA256SUMS`, затем опубликует GitHub
+Release. Он не создаёт и не перемещает теги. Исторические релизы `v1.1.0` и
+`v1.1.1` были вручную опубликованы из точных байтов плагина в их коммитах,
+поскольку в тех коммитах ещё не было release workflow.
 
 ### Локальная сборка
 
@@ -261,9 +190,12 @@ dist/SHA256SUMS
 
 ### Настройки репозитория
 
-Владельцу следует включить защиту `main` с обязательной проверкой CI, защиту
-тегов `v*` и требование review перед публикацией релиза. Это настройки GitHub,
-а не файлы репозитория.
+Сейчас GitHub защищает `main`: требуется pull request и проверка CI
+`Syntax and host-side checks`, включена линейная история, запрещены force push
+и удаление ветки; теги `v*.*.*` защищены от изменения и удаления. Для pull
+request сейчас требуется ноль одобрений, так как у репозитория один мейнтейнер.
+GitHub Actions должны быть привязаны к полным commit SHA. Это настройки GitHub
+в дополнение к workflow и policy-файлам репозитория.
 
 ### Лицензия
 
